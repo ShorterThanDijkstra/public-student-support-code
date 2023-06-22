@@ -7,6 +7,7 @@
 (require "interp.rkt")
 (require "compiler.rkt")
 (require "type-check-Lvar.rkt")
+(require "type-check-Cvar.rkt")
 
 ;; (debug-level 1)
 ;; (AST-output-syntax 'concrete-syntax)
@@ -29,11 +30,15 @@
 (define passes
   (list (list "uniquify" uniquify interp-Lvar type-check-Lvar)
         (list "remove-complex" remove-complex-opera* interp-Lvar type-check-Lvar)
+        (list "explicate control" explicate-control interp-Cvar type-check-Cvar)
         ))
+
+(debug-level 1) 
 ; (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
 ; (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
-(debug-level 1) 
-(interp-tests "rco" #f passes interp-Lvar "rco_test" (tests-for "rco"))
+; (interp-tests "rco" #f passes interp-Lvar "rco_test" (tests-for "rco"))
+(interp-tests "eco" #f passes interp-Lvar "eco_test" (tests-for "eco"))
+
 
 
 ;; Uncomment the following when all the passes are complete to
