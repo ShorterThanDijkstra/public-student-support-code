@@ -6,6 +6,8 @@
 (require "interp-Cvar.rkt")
 (require "interp.rkt")
 (require "compiler.rkt")
+(require "type-check-Lvar.rkt")
+
 ;; (debug-level 1)
 ;; (AST-output-syntax 'concrete-syntax)
 
@@ -24,7 +26,15 @@
           (string=? r (car (string-split p "_"))))
         all-tests)))
 
-(interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
+(define passes
+  (list (list "uniquify" uniquify interp-Lvar type-check-Lvar)
+        (list "remove-complex" remove-complex-opera* interp-Lvar type-check-Lvar)
+        ))
+; (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
+; (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
+(debug-level 1) 
+(interp-tests "rco" #f passes interp-Lvar "rco_test" (tests-for "rco"))
+
 
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.

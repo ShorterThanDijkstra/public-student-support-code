@@ -53,44 +53,85 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HW1 Passes
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(define (make-gen-sym)
+  (let ([id 0])
+    (lambda (sym)
+      (set! id (+ id 1))
+      (symbol-append sym
+                     (symbol-append
+                      (string->symbol ".")
+                      (string->symbol (number->string id)))))))
+
+(define gen-sym (make-gen-sym))
 
 (define (uniquify-exp env)
   (lambda (e)
     (match e
       [(Var x)
-       (error "TODO: code goes here (uniquify-exp, symbol?)")]
+       (Var (dict-ref env x))
+       ;  (error "TODO: code goes here (uniquify-exp, symbol?)")
+       ]
       [(Int n) (Int n)]
       [(Let x e body)
-       (error "TODO: code goes here (uniquify-exp, let)")]
+       ;  (error "TODO: code goes here (uniquify-exp, let)")
+       (let ([new_x (gen-sym x)])
+         (let ([new_env (dict-set env x new_x)])
+           (Let new_x
+                ((uniquify-exp env) e)
+                ((uniquify-exp new_env) body))))
+
+       ]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))])))
 
-;; uniquify : Lvar -> Lvar
+;; uniquify : R1 -> R1
 (define (uniquify p)
   (match p
     [(Program info e) (Program info ((uniquify-exp '()) e))]))
 
-;; remove-complex-opera* : Lvar -> Lvar^mon
-(define (remove-complex-opera* p)
-  (error "TODO: code goes here (remove-complex-opera*)"))
+(define (rco-exp e)
+  (match e
+    [(Var x) (Var x)]
+    [(Int n) (Int n)]
+    [(Let x e body)
+     (Let x
+          (rco-exp e)
+          (rco-exp body))]
+    [(Prim op es)
+     (let loop ([es es] [atoms '()])
+       (if (null? es)
+           (Prim op (reverse atoms))
+           (if (atm? (car es))
+               (loop (cdr es) (cons (car es) atoms))
+               (let ([sym (gen-sym 'tmp)]
+                     [new-e (rco-exp (car es))])
+                 (Let sym new-e
+                      (loop (cdr es) (cons (Var sym) atoms)))))))]))
 
-;; explicate-control : Lvar^mon -> Cvar
+
+;; remove-complex-opera* : R1 -> R1
+(define (remove-complex-opera* p)
+  (match p
+    [(Program info e) (Program info (rco-exp e))]))
+; (error "TODO: code goes here (remove-complex-opera*)"))
+
+;; explicate-control : R1 -> C0
 (define (explicate-control p)
   (error "TODO: code goes here (explicate-control)"))
 
-;; select-instructions : Cvar -> x86var
+;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
   (error "TODO: code goes here (select-instructions)"))
 
-;; assign-homes : x86var -> x86var
+;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
   (error "TODO: code goes here (assign-homes)"))
 
-;; patch-instructions : x86var -> x86int
+;; patch-instructions : psuedo-x86 -> x86
 (define (patch-instructions p)
   (error "TODO: code goes here (patch-instructions)"))
 
-;; prelude-and-conclusion : x86int -> x86int
+;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
   (error "TODO: code goes here (prelude-and-conclusion)"))
 
@@ -98,9 +139,8 @@
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
 (define compiler-passes
-  `(
+  `( ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
      ;; Uncomment the following passes as you finish them.
-     ;; ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
      ;; ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
      ;; ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
      ;; ("instruction selection" ,select-instructions ,interp-x86-0)
