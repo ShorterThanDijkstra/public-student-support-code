@@ -173,8 +173,8 @@
 (define (remove-complex-opera* p)
   (match p
     [(Program info e) (Program info (rco-exp e))]))
-         
-    ; [(Program info e) (Program info (anf-exp (rco-exp e)))]))
+
+; [(Program info e) (Program info (anf-exp (rco-exp e)))]))
 ; (error "TODO: code goes here (remove-complex-opera*)"))
 
 (define (explicate-tail e)
@@ -199,9 +199,99 @@
             (CProgram info (list (cons 'start (explicate-tail body))))]))
 ;   (error "TODO: code goes here (explicate-control)"))
 
+(define (insts-atm c-var-ele)
+  (match c-var-ele
+    [(Int n)  (Imm n)]
+    [(Var x) (Var x)]
+    [else (error 'insts-atm)]))
+
+; (define (insts-exp c-var-ele)
+;   (match c-var-ele
+;     [(Prim 'read '()) (list (Callq 'read_int) 0)]
+;     [(Prim '- (list atm)) (list (Instr 'negq (insts-atm atm)))]
+;     [(Prim '+ (list atm1 atm2)) (list (Instr 'movq (insts-atm atm1) (Reg 'rax))
+;                                       (Instr 'addq (insts-atm atm2) (Reg 'rax)))]
+;     [(Prim '- (list atm1 atm2)) (list (Instr 'movq (insts-atm atm1) (Reg 'rax))
+;                                       (Instr 'subq (insts-atm atm2) (Reg 'rax)))]
+;     [else (error 'insts-exp)]))
+(define (eq-var? var sym)
+  (match var
+    [(Var x) (eqv? x sym)]
+    [else #f]))
+
+(define (insts-exp e)
+  (match e
+    [(Prim 'read '())
+     (list (Callq 'read_int 0))]
+    [(Prim '- (list atm))
+     (list (Instr 'movq (list (insts-atm atm) (Reg 'rax))))]
+    [(Prim '+ (list atm1 atm2))
+     (list (Instr 'movq (list (insts-atm atm1) (Reg 'rax)))
+           (Instr 'addq (list (insts-atm atm2) (Reg 'rax))))]
+
+    [(Prim '-(list atm1 atm2))
+     (list (Instr 'movq (list (insts-atm atm1) (Reg 'rax)))
+           (Instr 'subq (list (insts-atm atm2) (Reg 'rax))))]
+    [else (error 'insts-exp)]))
+
+(define (insts-stmt c-var-ele)
+  (match c-var-ele
+    [(Assign (Var x) e)
+     (match e
+       [(Var x1)
+        (list (Instr 'movq (list (Var x1) (Var x))))]
+       [(Int n)
+        (list (Instr 'movq (list (Imm n) (Var x))))]
+       [(Prim 'read '())
+        (list (Callq 'read_int 0)
+              (Instr 'movq (list (Reg 'rax) (Var x))))]
+       [(Prim '- (list atm))
+        (list (Instr 'movq (list (insts-atm atm) (Var x)))
+              (Instr 'negq (list (Var x))))]
+
+       [(Prim '+ (list atm1 atm2))
+        (if (eq-var? atm1 x)
+            (list (Instr 'addq (list (insts-atm atm2) (Var x) )))
+            (if (eq-var? atm2 x)
+                (list (Instr 'addq (list (insts-atm atm1) (Var x))))
+                (list (Instr 'movq (list (insts-atm atm1) (Var x)))
+                      (Instr 'addq (list (insts-atm atm2) (Var x))))))]
+       [(Prim '- (list atm1 atm2))
+        (if (eq-var? atm1 x)
+            (list (Inst 'subq (list (insts-atm atm2) (Var x))))
+            (list (Instr 'movq (list (insts-atm atm1) (Var x)))
+                  (Instr 'subq (list (insts-atm atm2) (Var x)))))])]
+    [else (error 'insts-stmt)]))
+
+(define (insts-tail c-var-ele)
+  (match c-var-ele
+    [(Return e) (append (insts-exp e) (list (Jmp 'conclusion)))]
+    [(Seq stmt tail) (append (insts-stmt stmt) (insts-tail tail))]
+    [else (error 'insts-tail)]))
+
+(define (insts c-var-ele)
+  (match c-var-ele
+    [(Int n) (insts-atm c-var-ele)]
+    [(Var x) (insts-atm c-var-ele)]
+    [(Prim op es) (insts-atm c-var-ele)]
+    [(Assign (Var x) e) (insts-stmt  c-var-ele)]
+    [(Return e) (insts-tail c-var-ele)]
+    [(Seq stmt tail) (insts-tail c-var-ele)]))
+
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
-  (error "TODO: code goes here (select-instructions)"))
+  (match p
+    [(CProgram info lable&blocks)
+     (X86Program info (for/list ([lable&block lable&blocks])
+                        (cons (car lable&block)
+                              (Block '() (insts (cdr lable&block))))))]))
+
+; (define p (read-program "./tests/eco_test_3.rkt"))
+; (define p1 (uniquify p))
+; (define p2 (remove-complex-opera* p1))
+; (define p3 (explicate-control p2))
+; (define p4 (select-instructions p3))
+; (error "TODO: code goes here (select-instructions)"))
 
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
