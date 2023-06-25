@@ -221,6 +221,8 @@
 
 (define (insts-exp e)
   (match e
+    [(Var x) (list (Instr 'movq (list (Var x) (Reg 'rax))))]
+    [(Int n) (list (Instr 'movq (list (Int n) (Reg 'rax))))]
     [(Prim 'read '())
      (list (Callq 'read_int 0))]
     [(Prim '- (list atm))
@@ -286,16 +288,94 @@
                         (cons (car lable&block)
                               (Block '() (insts (cdr lable&block))))))]))
 
-; (define p (read-program "./tests/eco_test_3.rkt"))
-; (define p1 (uniquify p))
-; (define p2 (remove-complex-opera* p1))
-; (define p3 (explicate-control p2))
-; (define p4 (select-instructions p3))
 ; (error "TODO: code goes here (select-instructions)"))
+
+(define (type-space type)
+  (match type
+    ['Integer 8]
+    [else (error 'type-space)]))
+; homes: listof (sym . int)
+(define (assign-arg arg locals-types homes)
+  (match arg
+    [(Imm n) (list (Imm n) homes)]
+    [(Reg reg) (list (Reg reg) homes)]
+    [(Deref reg n) (Deref reg n)]
+    [(Var x) (let ([exist (dict-ref homes x #f)])
+               (if exist
+                   (list (Deref 'rbp exist) homes)
+                   (let ([type (dict-ref locals-types x)]
+                         [top (if (null? homes) 0 (cdar homes))])
+                     (let ([new-top (- top (type-space type))])
+                       (let ([new-homes (cons (cons x new-top) homes)])
+                         (list (Deref 'rbp new-top) new-homes))))))]
+    [else (error 'assign-arg)]))
+
+(define (assign-instr instr locals-types homes)
+  (match instr
+    [(Instr name args) (let loop ([args args]
+                                  [new-args '()]
+                                  [homes homes])
+                         (if (null? args)
+                             (list (Instr name (reverse new-args)) homes)
+                             (let ([res (assign-arg (car args) locals-types homes)])
+                               (let ([new-arg (car res)]
+                                     [new-homes (cadr res)])
+                                 (loop (cdr args) (cons new-arg new-args) new-homes)))))]
+    [(Callq lable n) (list (Callq lable n) homes)]
+    [(Retq) (list (Retq) homes)]
+    [(Jmp lable) (list (Jmp lable) homes)]
+    [else (error 'assign-instr)]))
+
+(define (ceil-16 n)
+  (let ([m (modulo n 16)])
+    (if (zero? m)
+        n
+        (+ n (- 16 m)))))
+
+(define (assign-block block locals-types)
+  (match block
+    [(Block info instrs)
+     ;  (displayln instrs)
+     (let loop ([instrs instrs] [new-instrs '()] [homes '()])
+       (if (null? instrs)
+           (list (ceil-16(-(cdar homes))) (reverse new-instrs))
+           (let ([res (assign-instr (car instrs) locals-types homes)])
+             (loop (cdr instrs) (cons (car res) new-instrs) (cadr res)))))]
+    [else (error 'assign-block "~s" block)]))
+
 
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
-  (error "TODO: code goes here (assign-homes)"))
+  (match p
+    [(X86Program info lable&blocks)
+     (let ([locals-types (dict-ref info 'locals-types)])
+       (let loop ([lable&blocks lable&blocks]
+                  [lables '()]
+                  [block-instrs '()]
+                  [spaces '()])
+         (if (null? lable&blocks)
+             (X86Program (append (list (cons 'stack-space spaces)) info)
+                         (for/list ([lable lables] [instrs block-instrs])
+                           (cons lable (Block '() instrs))))
+             (let ([curr-lable (caar lable&blocks)]
+                   [curr-block (cdar lable&blocks)])
+               ;  (displayln curr-lable)
+               ;  (displayln curr-block)
+               (let ([res (assign-block curr-block locals-types)])
+                 (let ([space (car res)]
+                       [new-block-instrs (cadr res)])
+                   (loop (cdr lable&blocks)
+                         (cons curr-lable lables)
+                         (cons new-block-instrs block-instrs)
+                         (cons (cons curr-lable space) spaces))))))))]))
+
+(define p (read-program "./examples/p3.example"))
+(define p1 (uniquify p))
+(define p2 (remove-complex-opera* p1))
+(define p3 (explicate-control p2))
+(define p4 (type-check-Cvar p3))
+(define p5 (select-instructions p4))
+; (define p6  (assign-homes p5))
 
 ;; patch-instructions : psuedo-x86 -> x86
 (define (patch-instructions p)
