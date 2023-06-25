@@ -34,21 +34,24 @@
         (list "instruction selection" select-instructions interp-pseudo-x86-0)
         (list "assign homes" assign-homes interp-x86-0)
         (list "patch instructions" patch-instructions interp-x86-0)
+        (list "prelude and conclusion" prelude-and-conclusion interp-x86-0)
         ))
 
 (debug-level 1) 
-; (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
+; (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
 ; (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
 ; (interp-tests "rco" #f passes interp-Lvar "rco_test" (tests-for "rco"))
 ; (interp-tests "eco" #f passes interp-Lvar "eco_test" (tests-for "eco"))
 ; (interp-tests "insel" #f passes interp-Lvar "insel_test" (tests-for "insel"))
 ; (interp-tests "homes" #f passes interp-Lvar "homes_test" (tests-for "homes"))
-(interp-tests "patch" #f passes interp-Lvar "patch_test" (tests-for "patch"))
+; (interp-tests "patch" #f passes interp-Lvar "patch_test" (tests-for "patch"))
+; (interp-tests "precon" #f passes interp-Lvar "precon_test" (tests-for "precon"))
+
 
 
 
 
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
-;; (compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
+(compiler-tests "var" #f passes "var_test" (tests-for "var"))
 

@@ -1,4 +1,4 @@
 (let ([x (let ([x 17]) (+ x x))])
 (let ([y x])
-(let ([x 19])
+(let ([x 8])
 (+ x y))))

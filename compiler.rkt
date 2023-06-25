@@ -222,7 +222,7 @@
 (define (insts-exp e)
   (match e
     [(Var x) (list (Instr 'movq (list (Var x) (Reg 'rax))))]
-    [(Int n) (list (Instr 'movq (list (Int n) (Reg 'rax))))]
+    [(Int n) (list (Instr 'movq (list (Imm n) (Reg 'rax))))]
     [(Prim 'read '())
      (list (Callq 'read_int 0))]
     [(Prim '- (list atm))
@@ -338,7 +338,8 @@
      ;  (displayln instrs)
      (let loop ([instrs instrs] [new-instrs '()] [homes '()])
        (if (null? instrs)
-           (list (ceil-16(-(cdar homes))) (reverse new-instrs))
+           (let ([top (if (null? homes) 0 (cdar homes))])
+             (list (ceil-16(- top)) (reverse new-instrs)))
            (let ([res (assign-instr (car instrs) locals-types homes)])
              (loop (cdr instrs) (cons (car res) new-instrs) (cadr res)))))]
     [else (error 'assign-block "~s" block)]))
@@ -418,18 +419,49 @@
                               (patch (cdr label&block)))))]))
 ; (error "TODO: code goes here (patch-instructions)"))
 
-(define p (read-program "./examples/p4.example"))
-(define p1 (uniquify p))
-(define p2 (remove-complex-opera* p1))
-(define p3 (explicate-control p2))
-(define p4 (type-check-Cvar p3))
-(define p5 (select-instructions p4))
-(define p6  (assign-homes p5))
-(define p7 (patch-instructions p6))
+(define (prelude space)
+  (Block '() (list (Instr 'pushq (list (Reg 'rbp)))
+                   (Instr 'movq (list (Reg 'rsp) (Reg 'rbp)))
+                   (Instr 'subq (list (Imm space) (Reg 'rsp)))
+                   (Jmp 'start))))
 
+(define (conclusion space)
+  (Block '() (list (Instr 'addq (list (Imm space) (Reg 'rsp)))
+                   (Instr 'popq (list (Reg 'rbp)))
+                   (Retq))))
+(define (if-macosx p)
+  (if (eqv? (system-type 'os) 'macosx)
+      (match p
+        [(X86Program info label&blocks)
+         (X86Program info (for/list ([label&block label&blocks])
+                            (let ([label (car label&block)]
+                                  [block (cdr label&block)])
+                              (let ([new-label (string->symbol (string-append "_" (symbol->string label)))])
+                                (cons new-label block)))))])
+      p))
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
-  (error "TODO: code goes here (prelude-and-conclusion)"))
+  (match p
+    [(X86Program info label&blocks)
+     (let ([start-space (dict-ref (dict-ref info 'stack-space) 'start)])
+       (if-macosx (X86Program info
+                              (cons (cons 'main (prelude start-space))
+                                    (append label&blocks
+                                            (list (cons 'conclusion (conclusion start-space))))))))]))
+
+
+; (define p (read-program "./examples/p4.example"))
+; (define p1 (uniquify p))
+; (define p2 (remove-complex-opera* p1))
+; (define p3 (explicate-control p2))
+; (define p4 (type-check-Cvar p3))
+; (define p5 (select-instructions p4))
+; (define p6  (assign-homes p5))
+; (define p7 (patch-instructions p6))
+; (define p8 (prelude-and-conclusion p7))
+; (display (print-x86 p8))
+
+; (error "TODO: code goes here (prelude-and-conclusion)"))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
