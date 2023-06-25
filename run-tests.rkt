@@ -33,6 +33,7 @@
         (list "explicate control" explicate-control interp-Cvar type-check-Cvar)
         (list "instruction selection" select-instructions interp-pseudo-x86-0)
         (list "assign homes" assign-homes interp-x86-0)
+        (list "patch instructions" patch-instructions interp-x86-0)
         ))
 
 (debug-level 1) 
@@ -41,7 +42,8 @@
 ; (interp-tests "rco" #f passes interp-Lvar "rco_test" (tests-for "rco"))
 ; (interp-tests "eco" #f passes interp-Lvar "eco_test" (tests-for "eco"))
 ; (interp-tests "insel" #f passes interp-Lvar "insel_test" (tests-for "insel"))
-(interp-tests "homes" #f passes interp-Lvar "homes_test" (tests-for "homes"))
+; (interp-tests "homes" #f passes interp-Lvar "homes_test" (tests-for "homes"))
+(interp-tests "patch" #f passes interp-Lvar "patch_test" (tests-for "patch"))
 
 
 

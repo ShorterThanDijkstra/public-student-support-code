@@ -283,10 +283,10 @@
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
   (match p
-    [(CProgram info lable&blocks)
-     (X86Program info (for/list ([lable&block lable&blocks])
-                        (cons (car lable&block)
-                              (Block '() (insts (cdr lable&block))))))]))
+    [(CProgram info label&blocks)
+     (X86Program info (for/list ([label&block label&blocks])
+                        (cons (car label&block)
+                              (Block '() (insts (cdr label&block))))))]))
 
 ; (error "TODO: code goes here (select-instructions)"))
 
@@ -321,9 +321,9 @@
                                (let ([new-arg (car res)]
                                      [new-homes (cadr res)])
                                  (loop (cdr args) (cons new-arg new-args) new-homes)))))]
-    [(Callq lable n) (list (Callq lable n) homes)]
+    [(Callq label n) (list (Callq label n) homes)]
     [(Retq) (list (Retq) homes)]
-    [(Jmp lable) (list (Jmp lable) homes)]
+    [(Jmp label) (list (Jmp label) homes)]
     [else (error 'assign-instr)]))
 
 (define (ceil-16 n)
@@ -347,39 +347,85 @@
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
   (match p
-    [(X86Program info lable&blocks)
+    [(X86Program info label&blocks)
      (let ([locals-types (dict-ref info 'locals-types)])
-       (let loop ([lable&blocks lable&blocks]
-                  [lables '()]
+       (let loop ([label&blocks label&blocks]
+                  [labels '()]
                   [block-instrs '()]
                   [spaces '()])
-         (if (null? lable&blocks)
+         (if (null? label&blocks)
              (X86Program (append (list (cons 'stack-space spaces)) info)
-                         (for/list ([lable lables] [instrs block-instrs])
-                           (cons lable (Block '() instrs))))
-             (let ([curr-lable (caar lable&blocks)]
-                   [curr-block (cdar lable&blocks)])
-               ;  (displayln curr-lable)
+                         (for/list ([label labels] [instrs block-instrs])
+                           (cons label (Block '() instrs))))
+             (let ([curr-label (caar label&blocks)]
+                   [curr-block (cdar label&blocks)])
+               ;  (displayln curr-label)
                ;  (displayln curr-block)
                (let ([res (assign-block curr-block locals-types)])
                  (let ([space (car res)]
                        [new-block-instrs (cadr res)])
-                   (loop (cdr lable&blocks)
-                         (cons curr-lable lables)
+                   (loop (cdr label&blocks)
+                         (cons curr-label labels)
                          (cons new-block-instrs block-instrs)
-                         (cons (cons curr-lable space) spaces))))))))]))
+                         (cons (cons curr-label space) spaces))))))))]))
 
-(define p (read-program "./examples/p3.example"))
+(define (deref-args-instr? instr)
+  (match instr
+    [(Instr name (list (Deref reg1 n1) (Deref reg2 n2))) #t]
+    [else #f]))
+
+(define (patch-instr instr)
+  (match instr
+    [(Instr 'addq (list deref1 deref2))
+     (list (Instr 'movq (list deref1 (Reg 'rax)))
+           (Instr 'addq (list (Reg 'rax) deref2)))]
+    [(Instr 'subq (list deref1 deref2))
+     (list (Instr 'movq (list deref1 (Reg 'rax)))
+           (Instr 'subq (list (Reg 'rax) deref2)))]
+    [(Instr 'movq (list deref1 deref2))
+     (list (Instr 'movq (list deref1 (Reg 'rax)))
+           (Instr 'movq (list (Reg 'rax) deref2)))]))
+
+; (define (patch-instr instr)
+;   (match instr
+;     [(Instr name args)
+;      (if (deref-pair? args)
+;          (patch-instr-arg instr)
+;          (Instr name args))]
+;     [(Callq label n) (Callq label n) ]
+;     [(Retq) (Retq) ]
+;     [(Jmp label) (Jmp label) ]
+;     [else (error 'assign-instr)]))
+
+(define (patch block)
+  (match block
+    [(Block info instrs)
+     (Block info (let loop ([instrs instrs] [new-instrs '()])
+                   (if (null? instrs)
+                       (reverse new-instrs)
+                       (if (deref-args-instr? (car instrs))
+                           (let ([patched-instrs (patch-instr (car instrs))])
+                             (loop (cdr instrs) (append (reverse patched-instrs) new-instrs)))
+                           (loop (cdr instrs) (cons (car instrs) new-instrs))))))]
+    [else (error "patch")]))
+
+;; patch-instructions : psuedo-x86 -> x86
+(define (patch-instructions p)
+  (match p
+    [(X86Program info label&blocks)
+     (X86Program info (for/list ([label&block label&blocks])
+                        (cons (car label&block)
+                              (patch (cdr label&block)))))]))
+; (error "TODO: code goes here (patch-instructions)"))
+
+(define p (read-program "./examples/p4.example"))
 (define p1 (uniquify p))
 (define p2 (remove-complex-opera* p1))
 (define p3 (explicate-control p2))
 (define p4 (type-check-Cvar p3))
 (define p5 (select-instructions p4))
-; (define p6  (assign-homes p5))
-
-;; patch-instructions : psuedo-x86 -> x86
-(define (patch-instructions p)
-  (error "TODO: code goes here (patch-instructions)"))
+(define p6  (assign-homes p5))
+(define p7 (patch-instructions p6))
 
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
