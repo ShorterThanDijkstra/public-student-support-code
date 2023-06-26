@@ -39,6 +39,11 @@
     [((Int n1) (Int n2)) (Int (fx+ n1 n2))]
     [(_ _) (Prim '+ (list r1 r2))]))
 
+(define (pe-sub r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2)) (Int (fx- n1 n2))]
+    [(_ _) (Prim '- (list r1 r2))]))
+
 (define (pe-exp e)
   (match e
     [(Int n) (Int n)]
@@ -449,19 +454,97 @@
                                     (append label&blocks
                                             (list (cons 'conclusion (conclusion start-space))))))))]))
 
+; (define (pe-exp-lvar env e)
+;   (match e
+;     [(Var x) (dict-ref env x)]
+;     [(Int n) (Int n)]
+;     [(Let x rhs body)
+;      (let ([e-val (pe-exp-lvar env rhs)])
+;        (if (Int? e-val)
+;            (let ([new-env (cons (cons x e-val) env)])
+;              (pe-exp-lvar new-env body))
+;            (Let x e-val (pe-exp-lvar env body))))]
+;     [(Prim 'read '()) (Prim 'read '())]
+;     [(Prim '- (list rand))
+;      (let ([rand-val (pe-exp-lvar env rand)])
+;        (pe-neg rand-val))]
+;     [(Prim '- (list rand1 rand2))
+;      (let ([rand1-val (pe-exp-lvar env rand1)]
+;            [rand2-val (pe-exp-lvar env rand2)])
+;        (pe-sub rand1-val rand2-val))]
+;     [(Prim '+ (list rand1 rand2))
+;      (let ([rand1-val (pe-exp-lvar env rand1)]
+;            [rand2-val (pe-exp-lvar env rand2)])
+;        (pe-add rand1-val rand2-val))]))
 
-; (define p (read-program "./examples/p4.example"))
-; (define p1 (uniquify p))
-; (define p2 (remove-complex-opera* p1))
-; (define p3 (explicate-control p2))
-; (define p4 (type-check-Cvar p3))
-; (define p5 (select-instructions p4))
-; (define p6  (assign-homes p5))
-; (define p7 (patch-instructions p6))
-; (define p8 (prelude-and-conclusion p7))
-; (display (print-x86 p8))
+(define (pe-neg-res env r)
+  (match r
+    [(Int n) (Int (fx- 0 n))]
+    [(Var x) (Int (fx- 0 (dict-ref env x)))]
+    [else (Prim '- (list r))]))
 
-; (error "TODO: code goes here (prelude-and-conclusion)"))
+(define (pe-add-res env r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2)) (Int (fx+ n1 n2))]
+    [((Int n) (Var x) )  (Int (fx+ (dict-ref env x) n))]
+    [((Int n) (Prim '- (Var x)) ) (Int (fx- (dict-ref env x) n))]
+    [((Int n1) (Prim '+ (list (Int n2) inert))) (Prim '+ (list (Int (fx+ n1 n2)) inert))]
+    [(inert (Int n)) (pe-add-res env (Int n) inert)]
+    [(_ _) (Prim '+ (list r1 r2))]))
+
+(define (add-res-trans e)
+  (match e
+         [(Prim '+ (list (Int n1) r2)) (Prim '+ (list (Int n1) (add-res-trans r2)))]
+         [(Prim '+ (list r1 (Int n2))) (Prim '+ (list (Int n2) (add-res-trans r1)))]
+         [(Prim '+ (list r1 r2)) (Prim '+ (list  (add-res-trans r1) (add-res-trans r2)))]
+         [else e]))
+
+(define (pe-sub-res env r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2)) (Int (fx- n1 n2))]
+    [((Var x1) (Int n2)) (Int (fx- (dict-ref env x1) n2))]
+    [((Int n1) (Var x2)) (Int (fx- n1 (dict-ref env x2)))]
+    [((Var x1) (Var x2)) (Int (fx- (dict-ref env x1) (dict-ref env x2)))]
+    [(_ _) (Prim '- (list r1 r2))]))
+
+(define (pe-exp-lvar env e)
+  (match e
+    [(Var x) (dict-ref env x)]
+    [(Int n) (Int n)]
+    [(Let x rhs body)
+     (let ([e-val (pe-exp-lvar env rhs)])
+       (if (Int? e-val)
+           (let ([new-env (cons (cons x e-val) env)])
+             (pe-exp-lvar new-env body))
+           (Let x e-val (pe-exp-lvar env body))))]
+    [(Prim 'read '()) (Prim 'read '())]
+    [(Prim '- (list rand))
+     (let ([rand-val (pe-exp-lvar env rand)])
+       (pe-neg-res env rand-val))]
+    [(Prim '- (list rand1 rand2))
+     (let ([rand1-val (pe-exp-lvar env rand1)]
+           [rand2-val (pe-exp-lvar env rand2)])
+       (pe-sub-res env rand1-val rand2-val))]
+    [(Prim '+ (list rand1 rand2))
+     (let ([rand1-val (pe-exp-lvar env rand1)]
+           [rand2-val (pe-exp-lvar env rand2)])
+       (pe-add-res env rand1-val rand2-val))]))
+
+(define (pe-Lvar p)
+  (match p
+    [(Program '() e) (Program '() (pe-exp-lvar '() e))]))
+
+(define p (read-program "./examples/p7.example"))
+(define p0 (pe-Lvar p))
+(define p1 (uniquify p0))
+(define p2 (remove-complex-opera* p1))
+(define p3 (explicate-control p2))
+(define p4 (type-check-Cvar p3))
+(define p5 (select-instructions p4))
+(define p6  (assign-homes p5))
+(define p7 (patch-instructions p6))
+(define p8 (prelude-and-conclusion p7))
+(display (print-x86 p8))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
@@ -469,10 +552,10 @@
 (define compiler-passes
   `( ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
      ;; Uncomment the following passes as you finish them.
-     ;; ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
-     ;; ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
-     ;; ("instruction selection" ,select-instructions ,interp-x86-0)
-     ;; ("assign homes" ,assign-homes ,interp-x86-0)
-     ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+     ; ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
+     ; ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
+     ; ("instruction selection" ,select-instructions ,interp-x86-0)
+     ; ("assign homes" ,assign-homes ,interp-x86-0)
+     ; ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
