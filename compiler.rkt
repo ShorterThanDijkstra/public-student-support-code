@@ -1,9 +1,11 @@
 #lang racket
 (require racket/set racket/stream)
+(require graph)
 (require racket/fixnum)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
+(require "interp.rkt")
 (require "type-check-Lvar.rkt")
 (require "type-check-Cvar.rkt")
 (require "utilities.rkt")
@@ -357,21 +359,25 @@
      (let ([locals-types (dict-ref info 'locals-types)])
        (let loop ([label&blocks label&blocks]
                   [labels '()]
+                  [block-infos '()]
                   [block-instrs '()]
                   [spaces '()])
          (if (null? label&blocks)
              (X86Program (append (list (cons 'stack-space spaces)) info)
-                         (for/list ([label labels] [instrs block-instrs])
-                           (cons label (Block '() instrs))))
+                         (for/list ([label labels] [block-info block-infos] [instrs block-instrs])
+                           (cons label (Block block-info instrs))))
              (let ([curr-label (caar label&blocks)]
                    [curr-block (cdar label&blocks)])
                ;  (displayln curr-label)
                ;  (displayln curr-block)
-               (let ([res (assign-block curr-block locals-types)])
+               (let ([res (assign-block curr-block locals-types)]
+                     [block-info (Block-info curr-block)]
+                     )
                  (let ([space (car res)]
                        [new-block-instrs (cadr res)])
                    (loop (cdr label&blocks)
                          (cons curr-label labels)
+                         (cons block-info block-infos)
                          (cons new-block-instrs block-instrs)
                          (cons (cons curr-label space) spaces))))))))]))
 
@@ -434,6 +440,22 @@
   (Block '() (list (Instr 'addq (list (Imm space) (Reg 'rsp)))
                    (Instr 'popq (list (Reg 'rbp)))
                    (Retq))))
+
+(define (prefix-underscore label)
+  (string->symbol (string-append "_" (symbol->string label))))
+
+(define (if-macosx-instr instr)
+  (match instr
+    [(Jmp label) (Jmp (prefix-underscore label))]
+    [(Callq label n) (Callq (prefix-underscore label) n)]
+    [else instr]))
+
+(define (if-macosx-block block)
+  (match block
+    [(Block '() instrs)
+     (Block '() (map if-macosx-instr instrs))]))
+
+
 (define (if-macosx p)
   (if (eqv? (system-type 'os) 'macosx)
       (match p
@@ -441,8 +463,8 @@
          (X86Program info (for/list ([label&block label&blocks])
                             (let ([label (car label&block)]
                                   [block (cdr label&block)])
-                              (let ([new-label (string->symbol (string-append "_" (symbol->string label)))])
-                                (cons new-label block)))))])
+                              (let ([new-label (prefix-underscore label)])
+                                (cons new-label (if-macosx-block block))))))])
       p))
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
@@ -494,10 +516,10 @@
 
 (define (add-res-trans e)
   (match e
-         [(Prim '+ (list (Int n1) r2)) (Prim '+ (list (Int n1) (add-res-trans r2)))]
-         [(Prim '+ (list r1 (Int n2))) (Prim '+ (list (Int n2) (add-res-trans r1)))]
-         [(Prim '+ (list r1 r2)) (Prim '+ (list  (add-res-trans r1) (add-res-trans r2)))]
-         [else e]))
+    [(Prim '+ (list (Int n1) r2)) (Prim '+ (list (Int n1) (add-res-trans r2)))]
+    [(Prim '+ (list r1 (Int n2))) (Prim '+ (list (Int n2) (add-res-trans r1)))]
+    [(Prim '+ (list r1 r2)) (Prim '+ (list  (add-res-trans r1) (add-res-trans r2)))]
+    [else e]))
 
 (define (pe-sub-res env r1 r2)
   (match* (r1 r2)
@@ -534,28 +556,161 @@
   (match p
     [(Program '() e) (Program '() (pe-exp-lvar '() e))]))
 
-(define p (read-program "./examples/p7.example"))
-(define p0 (pe-Lvar p))
-(define p1 (uniquify p0))
-(define p2 (remove-complex-opera* p1))
-(define p3 (explicate-control p2))
-(define p4 (type-check-Cvar p3))
-(define p5 (select-instructions p4))
-(define p6  (assign-homes p5))
-(define p7 (patch-instructions p6))
-(define p8 (prelude-and-conclusion p7))
-(display (print-x86 p8))
+(define caller-saved
+  '(rax rcx rdx rsi rdi r8 r9 r10 r11))
+
+(define callee-saved
+  '(rsp rbp rbx r12 r13 r14 r15))
+
+(define argument-pass
+  '(rdi rsi rdx rcx r8 r9))
+
+(define (live-arg arg)
+  (match arg
+    [(Imm n) (set)]
+    [(Reg reg) (set reg)]
+    [(Deref reg int) (set reg)]
+    [(Var x) (set x)]))
+
+(define (read-instr instr)
+  (match instr
+    [(Instr 'addq (list arg1 arg2))
+     (set-union (live-arg arg1) (live-arg arg2))]
+    [(Instr 'subq (list arg1 arg2))
+     (set-union (live-arg arg1) (live-arg arg2))]
+    [(Instr 'negq (list arg1)) (live-arg arg1)]
+    [(Instr 'movq (list arg1 arg2)) (live-arg arg1)]
+    [(Instr 'pushq (list arg1)) (live-arg arg1)]
+    [(Instr 'popq (list arg1)) (set)]
+    [(Callq label n) (list->set (take argument-pass n))]
+    [(Jmp 'conclusion) (set 'rax 'rsp)] ;todo
+    ))
+
+(define (write-instr instr)
+  (match instr
+    [(Instr 'addq (list arg1 arg2))
+     (live-arg arg2)]
+    [(Instr 'subq (list arg1 arg2))
+     (live-arg arg2)]
+    [(Instr 'negq (list arg1)) (live-arg arg1)]
+    [(Instr 'movq (list arg1 arg2)) (live-arg arg2)]
+    [(Instr 'pushq (list arg1)) (set)]
+    [(Instr 'popq (list arg1)) (live-arg arg1)]
+    [(Callq label n) (list->set caller-save)]
+    [(Jmp 'conclusion) (set 'rbp)] ;todo
+    ))
+
+(define (live-instr instr live-after)
+  (let ([reads (read-instr instr)]
+        [writes (write-instr instr)])
+    (set-union (set-subtract live-after writes) reads)))
+
+(define (live-block block)
+  (match block
+    [(Block info instrs)
+     (let loop ([instrs-rev (reverse instrs)]
+                [lives '()]
+                [live-after (set)])
+       (if (null? instrs-rev)
+           (Block (append (list (cons 'lives lives)) info) instrs)
+           (let ([new-live-after (live-instr (first instrs-rev) live-after)])
+            ;  (displayln new-live-after)
+             (loop (rest instrs-rev) (cons new-live-after lives) new-live-after))))]))
+
+;;;x86-var -> x86-var
+(define (uncover-live p)
+  (match p
+    [(X86Program info label&blocks)
+     (let ([labels (map car label&blocks)]
+           [blocks (map cdr label&blocks)])
+       (X86Program info (map (lambda (label block) (cons label block)) labels (map live-block blocks))))]))
+
+(define (link g s d)
+  (begin (add-edge! g s d) g))
+
+(define (mov-interfence s d after g)
+  (let loop ([after  after]
+             [g g])
+    (if (null? after)
+        g
+        (let ([v (first after)])
+        (if (or (eqv? s v) (eqv? d v))
+            (loop (rest after) g)
+            (loop (rest after) (link g v d)))))))
+
+(define (other-interfence writes after g)
+  (if (null? writes)
+      g
+      (let ([d (first writes)])
+        (let loop ([after-iter after] [g g])
+          (if (null? after-iter)
+              (other-interfence (cdr writes) after g)
+              (let ([v (first after-iter)])
+                (if (eqv? v d)
+                    (loop (rest after-iter) g)
+                    (loop (rest after-iter) (link g v d)))))))))
+
+(define (mov-arg-sym arg)
+  (match arg
+    [(Imm n) '()]
+    [(Reg reg)  reg]
+    [(Deref reg int) '()]
+    [(Var x) x]))
+(define (live-instr-interfence after instr g)
+  (match instr
+    [(Instr 'movq (list arg1 arg2))
+     (mov-interfence (mov-arg-sym arg1) (mov-arg-sym arg2) (set->list after) g)]
+    [else (let ([writes (write-instr instr)])
+            (other-interfence (set->list writes) (set->list after) g))]
+    ))
+
+(define (block-interfence block) 
+  (match block
+         [(Block info instrs)
+          (let ([lives (dict-ref info 'lives)]
+                [g (undirected-graph (append caller-saved callee-saved argument-pass))])
+            (let loop ([lives (rest lives)]
+                       [instrs instrs]
+                       [g g])
+              (if (null? lives)
+                  g
+                  (loop (rest lives) (rest instrs) (live-instr-interfence (first lives) (first instrs) g)))))]))
+            
+(define (build-interference p)
+  (match p
+         [(X86Program info label&blocks)
+          (let ([labels (map car label&blocks)]
+                [blocks (map cdr label&blocks)])
+            (let ([conflicts (map block-interfence blocks)])
+              (let ([new-info (append (list (cons 'conflicts (map cons labels conflicts))) info)])
+                (X86Program new-info label&blocks))))]))
+          
+; (define p (read-program "./examples/p9.example"))
+; ; (define p0 (pe-Lvar p))
+; (define p0 p)
+; ; (define p1 (uniquify p0))
+; (define p1 p0)
+; (define p2 (remove-complex-opera* p1))
+; (define p3 (explicate-control p2))
+; (define p4 (type-check-Cvar p3))
+; (define p5 (select-instructions p4))
+; (define p6 (uncover-live p5))
+; (define p7  (assign-homes p6))
+; (define p8 (patch-instructions p7))
+; (define p9 (prelude-and-conclusion p8))
+; (display (print-x86 p9))
+
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
 (define compiler-passes
-  `( ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
-     ;; Uncomment the following passes as you finish them.
-     ; ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
-     ; ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
-     ; ("instruction selection" ,select-instructions ,interp-x86-0)
-     ; ("assign homes" ,assign-homes ,interp-x86-0)
-     ; ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+  `( ("partial eval" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
+    ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
+     ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
+     ("instruction selection" ,select-instructions ,interp-pseudo-x86-0)
+     ("assign homes" ,assign-homes ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))

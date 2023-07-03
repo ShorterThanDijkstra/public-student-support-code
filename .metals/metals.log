@@ -1,0 +1,41 @@
+2023.06.28 16:09:12 INFO  Started: Metals version 0.11.12 in workspace '/home/maerd_zinbiel/Desktop/eoc/public-student-support-code' for client Visual Studio Code 1.75.1.
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.license.VersionPrinter printVersionOnly
+INFO: Flyway Community Edition 9.16.3 by Redgate
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.license.VersionPrinter printVersion
+INFO: See release notes here: https://rd.gt/416ObMi
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.license.VersionPrinter printVersion
+INFO: 
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.database.base.BaseDatabaseType createDatabase
+INFO: Database: jdbc:h2:file:/home/maerd_zinbiel/Desktop/eoc/public-student-support-code/.metals/metals (H2 2.1)
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory allAppliedMigrations
+INFO: Schema history table "PUBLIC"."flyway_schema_history" does not exist yet
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.command.DbValidate validate
+INFO: Successfully validated 4 migrations (execution time 00:00.024s)
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory create
+INFO: Creating Schema History table "PUBLIC"."flyway_schema_history" ...
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.command.DbMigrate migrateGroup
+INFO: Current version of schema "PUBLIC": << Empty Schema >>
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "PUBLIC" to version "1 - Create tables"
+Jun 28, 2023 4:09:12 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "PUBLIC" to version "2 - Server discovery"
+Jun 28, 2023 4:09:13 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "PUBLIC" to version "3 - Jar symbols"
+Jun 28, 2023 4:09:13 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "PUBLIC" to version "4 - Fingerprints"
+Jun 28, 2023 4:09:13 PM org.flywaydb.core.internal.command.DbMigrate logSummary
+INFO: Successfully applied 4 migrations to schema "PUBLIC", now at version v4 (execution time 00:00.100s)
+2023.06.28 16:09:13 INFO  time: initialize in 0.95s
+2023.06.28 16:09:16 WARN  Build server is not auto-connectable.
+2023.06.28 16:09:16 WARN  no build tool detected in workspace '/home/maerd_zinbiel/Desktop/eoc/public-student-support-code'. The most common cause for this problem is that the editor was opened in the wrong working directory, for example if you use sbt then the workspace directory should contain build.sbt. 
+2023.06.28 16:09:16 WARN  no build target for: /home/maerd_zinbiel/Desktop/eoc/public-student-support-code/tests/Test.java
+Jun 28, 2023 4:09:16 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 1
+2023.06.28 16:09:19 INFO  time: code lens generation in 2.14s
+Jun 28, 2023 4:09:19 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 3
+Jun 28, 2023 4:09:19 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 8
+2023.06.28 17:11:38 INFO  Shutting down server
+2023.06.28 17:11:38 INFO  shutting down Metals
+2023.06.28 17:11:38 INFO  Exiting server
