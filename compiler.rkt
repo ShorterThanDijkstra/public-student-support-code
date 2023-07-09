@@ -9,6 +9,7 @@
 (require "type-check-Lvar.rkt")
 (require "type-check-Cvar.rkt")
 (require "utilities.rkt")
+(require "priority_queue.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -226,6 +227,7 @@
     [(Var x) (eqv? x sym)]
     [else #f]))
 
+; store result in %rax
 (define (insts-exp e)
   (match e
     [(Var x) (list (Instr 'movq (list (Var x) (Reg 'rax))))]
@@ -233,12 +235,13 @@
     [(Prim 'read '())
      (list (Callq 'read_int 0))]
     [(Prim '- (list atm))
-     (list (Instr 'movq (list (insts-atm atm) (Reg 'rax))))]
+     (list (Instr 'movq (list (insts-atm atm) (Reg 'rax)))
+           (Instr 'negq (list (Reg 'rax))))]
     [(Prim '+ (list atm1 atm2))
      (list (Instr 'movq (list (insts-atm atm1) (Reg 'rax)))
            (Instr 'addq (list (insts-atm atm2) (Reg 'rax))))]
 
-    [(Prim '-(list atm1 atm2))
+    [(Prim '- (list atm1 atm2))
      (list (Instr 'movq (list (insts-atm atm1) (Reg 'rax)))
            (Instr 'subq (list (insts-atm atm2) (Reg 'rax))))]
     [else (error 'insts-exp)]))
@@ -274,7 +277,10 @@
 
 (define (insts-tail c-var-ele)
   (match c-var-ele
-    [(Return e) (append (insts-exp e) (list (Jmp 'conclusion)))]
+    [(Return e)
+    ;  (displayln e)
+    ;  (displayln (insts-exp e))
+     (append (insts-exp e) (list (Jmp 'conclusion)))]
     [(Seq stmt tail) (append (insts-stmt stmt) (insts-tail tail))]
     [else (error 'insts-tail)]))
 
@@ -614,7 +620,7 @@
        (if (null? instrs-rev)
            (Block (append (list (cons 'lives lives)) info) instrs)
            (let ([new-live-after (live-instr (first instrs-rev) live-after)])
-            ;  (displayln new-live-after)
+             ;  (displayln new-live-after)
              (loop (rest instrs-rev) (cons new-live-after lives) new-live-after))))]))
 
 ;;;x86-var -> x86-var
@@ -634,9 +640,9 @@
     (if (null? after)
         g
         (let ([v (first after)])
-        (if (or (eqv? s v) (eqv? d v))
-            (loop (rest after) g)
-            (loop (rest after) (link g v d)))))))
+          (if (or (eqv? s v) (eqv? d v))
+              (loop (rest after) g)
+              (loop (rest after) (link g v d)))))))
 
 (define (other-interfence writes after g)
   (if (null? writes)
@@ -656,6 +662,7 @@
     [(Reg reg)  reg]
     [(Deref reg int) '()]
     [(Var x) x]))
+
 (define (live-instr-interfence after instr g)
   (match instr
     [(Instr 'movq (list arg1 arg2))
@@ -664,27 +671,231 @@
             (other-interfence (set->list writes) (set->list after) g))]
     ))
 
-(define (block-interfence block) 
+(define (block-interfence block)
   (match block
-         [(Block info instrs)
-          (let ([lives (dict-ref info 'lives)]
-                [g (undirected-graph (append caller-saved callee-saved argument-pass))])
-            (let loop ([lives (rest lives)]
-                       [instrs instrs]
-                       [g g])
-              (if (null? lives)
-                  g
-                  (loop (rest lives) (rest instrs) (live-instr-interfence (first lives) (first instrs) g)))))]))
-            
+    [(Block info instrs)
+     (let ([lives (dict-ref info 'lives)]
+           [g (undirected-graph (append caller-saved callee-saved argument-pass))])
+       (let loop ([lives (rest lives)]
+                  [instrs instrs]
+                  [g g])
+         (if (null? lives)
+             g
+             (loop (rest lives) (rest instrs) (live-instr-interfence (first lives) (first instrs) g)))))]))
+
+;x86_var -> x86_var
 (define (build-interference p)
   (match p
-         [(X86Program info label&blocks)
-          (let ([labels (map car label&blocks)]
-                [blocks (map cdr label&blocks)])
-            (let ([conflicts (map block-interfence blocks)])
-              (let ([new-info (append (list (cons 'conflicts (map cons labels conflicts))) info)])
-                (X86Program new-info label&blocks))))]))
-          
+    [(X86Program info label&blocks)
+     (let ([labels (map car label&blocks)]
+           [blocks (map cdr label&blocks)])
+       (let ([conflicts (map block-interfence blocks)])
+         (let ([new-info (append (list (cons 'conflicts (map cons labels conflicts))) info)])
+           (X86Program new-info label&blocks))))]))
+
+
+(define (graph-of-program-start p)
+  (match p
+    [(X86Program info body)
+     (dict-ref (dict-ref info 'conflicts) 'start)]))
+
+(struct Vertex (name color staturation) #:transparent #:mutable)
+
+(define (put-staturation-vertex! vertex s)
+  (match vertex
+    [(Vertex color name staturation)
+     (let ([new-staturation (if (member s staturation) staturation (cons s staturation))])
+       (begin
+         (set-Vertex-staturation! vertex new-staturation)
+         vertex))]))
+
+(define the-reg-color-map
+  '((rcx . 0) (rdx . 1) (rsi . 2) (rdi . 3) (r8 . 4) (r9 . 5)
+              (r10 . 6) (rbx . 7) (r12 . 8) (r13 . 9) (r14 . 10)
+              (rax . -1) (rsp . -2) (rbp . -3) (r11 . -4) (r15 . -5)))
+
+(define (reg-of-the-reg-color-map color)
+  (let loop ([reg-color-map the-reg-color-map])
+    (if (null? reg-color-map)
+        (error 'reg-of-the-reg-color-map)
+        (let ([reg (car (first reg-color-map))] [reg-color (cdr (first reg-color-map))])
+          (if (= reg-color color)
+              reg
+              (loop (rest reg-color-map)))))))
+
+(define (every? pred lst)
+  (if (null? lst)
+      #t
+      (and (pred (first lst))
+           (every? pred (rest lst)))))
+
+(define (color-graph g vars)
+  (define NOCOLOR '-)
+  (define (cmp v1 v2)
+    (let ([len1 (length (Vertex-staturation v1))]
+          [len2 (length (Vertex-staturation v2))])
+      (if (= len1 len2)
+          (symbol<? (Vertex-name v1) (Vertex-name v2))
+          (> len1 len2))))
+
+  (define (update-queue! que handle-map vertex)
+    (let ([name (Vertex-name vertex)])
+      (let ([handle (dict-ref handle-map name #f)])
+        (if handle
+            (pqueue-decrease-key! que handle)
+            'void))))
+
+  (define (fill-staturation-vertex! vertex-sym neighbors vertex-map handle-map que)
+    (let ([vertex (dict-ref vertex-map vertex-sym)])
+      (let loop ([neighbors neighbors])
+        (if (null? neighbors)
+            'void
+            (let ([neighbor (first neighbors)])
+              (let ([neighbor-vertex (dict-ref vertex-map neighbor)])
+                (let ([neighbor-color (Vertex-color neighbor-vertex)])
+                  (if (eqv? neighbor-color NOCOLOR)
+                      (loop (rest neighbors))
+                      (begin
+                        (put-staturation-vertex! vertex neighbor-color)
+                        (update-queue! que handle-map vertex)
+                        (loop (rest neighbors)))))))))))
+
+  (define (fill-staturation-graph! g vars vertex-map handle-map que)
+    (for/list ([var vars])
+      (let ([neighbors (sequence->list (in-neighbors g var))])
+        (fill-staturation-vertex! var neighbors vertex-map handle-map que))))
+
+  (define (init!)
+    (let ([que (make-pqueue cmp)]) ; 存放未着色节点
+      (let loop ([vs vars] [vertex-map '()] [handle-map '()])
+        (if (null? vs)
+            (begin (fill-staturation-graph! g vars vertex-map handle-map que) (values que vertex-map handle-map))
+            (let ([color (dict-ref the-reg-color-map (first vs) NOCOLOR)])
+              (let ([vertex (Vertex (first vs) color '())])
+                (if (eqv? color NOCOLOR)
+                    (let ([handle  (pqueue-push! que vertex)])
+                      (loop (rest vs)
+                            (cons (cons (first vs) vertex) vertex-map)
+                            (cons (cons (first vs) handle) handle-map)))
+                    (loop (rest vs)
+                          (cons (cons (first vs) vertex) vertex-map)
+                          handle-map))))))))
+
+  (define (next-color staturation)
+    (let loop ([color 0])
+      ; (display color)
+      (if (member color staturation)
+          (loop (+ color 1))
+          color)))
+
+  (define (update-neighbors-staturation! vertex vertex-map handle-map que)
+    ; (displayln vertex-map)
+    (match vertex
+      [(Vertex name color staturation)
+       (let loop ([neighbors (sequence->list (in-neighbors g name))])
+         (if (null? neighbors)
+             'void
+             (let ([neighbor (first neighbors)])
+               (let ([neighbor-vertex (dict-ref vertex-map neighbor)])
+                 (begin
+                   (put-staturation-vertex! neighbor-vertex color)
+                   (update-queue! que handle-map neighbor-vertex)
+                   (loop  (rest neighbors)))))))]))
+
+  ; dsatur 算法：给某个结点染色，更新邻结点的saturation，更新后的邻结点可能会产生冲突吗？
+  ; 不会，所以不需要这个方法
+  ; (define (check-neighbors vertex vertex-map)
+  ;   ; (displayln vertex-map)
+  ;   (define (check-1 vertex) ; 1层neighbor检查
+  ;     (match vertex
+  ;       [(Vertex name color staturation)
+  ;        (let loop ([neighbors (sequence->list (in-neighbors g name))])
+  ;          (if (null? neighbors)
+  ;              #t
+  ;              (let ([neighbor-vertex (dict-ref vertex-map (first neighbors))])
+  ;                (and (not (member (Vertex-color neighbor-vertex) (Vertex-staturation neighbor-vertex)))
+  ;                     (loop (rest neighbors))))))]))
+  ;   (let ([neighbors (sequence->list (in-neighbors g (Vertex-name vertex)))])
+  ;     (every? check-1 (map (lambda (v) (dict-ref vertex-map v)) neighbors))))
+
+  (define (dsatur-color! que vertex-map handle-map)
+    (if (zero? (pqueue-count que))
+        vertex-map
+        (let ([vertex (pqueue-pop! que)])
+          (match vertex
+            [(Vertex name color staturation)
+             (if (not (eqv? color NOCOLOR))
+                 (error 'dsatur-color!)
+                 (let ([new-color (next-color staturation)])
+                   (begin
+                     (set-Vertex-color! vertex new-color)
+                     (update-neighbors-staturation! vertex vertex-map handle-map que)
+                     (dsatur-color! que vertex-map handle-map))))])))) ; what if fail to color graph?
+
+  (define-values (que vertex-map handle-map) (init!))
+
+  (let ([vertex-map (dsatur-color! que vertex-map handle-map)])
+    (let loop ([vertex-map vertex-map] [color-map '()])
+      (if (null? vertex-map)
+          color-map
+          (let ([var (car (first vertex-map))]
+                [color (Vertex-color (cdr (first vertex-map)))])
+            (loop (rest vertex-map) (cons (cons var color) color-map))))))
+  )
+
+
+(define (vars-in-graph g)
+  (filter (lambda (v) (> (length (sequence->list (in-neighbors g v))) 0))
+          (sequence->list (in-vertices g))))
+
+(define (allocate-registers p)
+  (define (build-var-map color-map reg-avaliable)
+    (let loop ([color-map color-map] [var-map '()])
+      (if (null? color-map)
+          var-map
+          (let ([var (car (first color-map))]
+                [color (cdr (first color-map))])
+            (let ([location (if (< color reg-avaliable)
+                                (Reg (reg-of-the-reg-color-map color))
+                                (let ([offset (* (- (+ color 1) reg-avaliable) -8)]) ; todo: other types
+                                  (Deref 'rbp offset)))])
+              (loop (rest color-map) (cons (cons var location) var-map)))))))
+
+  (define (assign-arg arg var-map)
+    (match arg
+      [(Var name) (dict-ref var-map name)]
+      [(Imm n) (Imm n)]
+      [(Reg name) (Reg name)]
+      [(Deref reg offset) (Deref reg offset)]))
+
+  (define (assign-instr instr var-map)
+    (match instr
+      [(Instr name args)
+       (Instr name (map (lambda (arg) (assign-arg arg var-map)) args))]
+      [else instr]))
+
+  (define (assign-location block var-map)
+    (match block
+      [(Block info instrs)
+       (Block info (map (lambda (instr) (assign-instr instr var-map)) instrs))]))
+
+  (define (allocate-reg-start-body var-map body)
+    (let ([labels (map car body)] [blocks (map cdr body)])
+      (for/list ([label labels] [block blocks])
+        (if (eqv? label 'start)
+            (cons label (assign-location block var-map))
+            (cons label block)))))
+
+  (match p
+    [(X86Program info body)
+     (let* ([g-start (dict-ref (dict-ref info 'conflicts) 'start)]
+            [vars (vars-in-graph g-start)]
+            [color-map (color-graph g-start vars)]
+            [var-map (build-var-map color-map 1)]
+            [new-body (allocate-reg-start-body var-map body)])
+       (X86Program info new-body))]))
+
+
 ; (define p (read-program "./examples/p9.example"))
 ; ; (define p0 (pe-Lvar p))
 ; (define p0 p)
@@ -706,7 +917,7 @@
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `( ("partial eval" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
-    ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
+     ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
      ("instruction selection" ,select-instructions ,interp-pseudo-x86-0)

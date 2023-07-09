@@ -27,25 +27,39 @@
           (string=? r (car (string-split p "_"))))
         all-tests)))
 
+; (define passes
+;   (list (list "uniquify" uniquify interp-Lvar type-check-Lvar)
+;         (list "remove-complex" remove-complex-opera* interp-Lvar type-check-Lvar)
+;         (list "explicate control" explicate-control interp-Cvar type-check-Cvar)
+;         (list "instruction selection" select-instructions interp-pseudo-x86-0)
+;         (list "assign homes" assign-homes interp-x86-0)
+;         (list "patch instructions" patch-instructions interp-x86-0)
+;         (list "prelude and conclusion" prelude-and-conclusion interp-x86-0)
+;         ))
+
 (define passes
   (list (list "uniquify" uniquify interp-Lvar type-check-Lvar)
         (list "remove-complex" remove-complex-opera* interp-Lvar type-check-Lvar)
         (list "explicate control" explicate-control interp-Cvar type-check-Cvar)
         (list "instruction selection" select-instructions interp-pseudo-x86-0)
-        (list "assign homes" assign-homes interp-x86-0)
-        (list "patch instructions" patch-instructions interp-x86-0)
-        (list "prelude and conclusion" prelude-and-conclusion interp-x86-0)
+        (list "uncover live" uncover-live interp-pseudo-x86-0)
+        (list "build interference" build-interference interp-pseudo-x86-0)
+        (list "allocate registers" allocate-registers interp-x86-0)
+        ; (list "patch instructions" patch-instructions interp-x86-0)
+        ; (list "prelude and conclusion" prelude-and-conclusion interp-x86-0)
         ))
 
-(debug-level 1) 
+; (debug-level 1) 
 (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
-; (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
-; (interp-tests "rco" #f passes interp-Lvar "rco_test" (tests-for "rco"))
-; (interp-tests "eco" #f passes interp-Lvar "eco_test" (tests-for "eco"))
-; (interp-tests "insel" #f passes interp-Lvar "insel_test" (tests-for "insel"))
-; (interp-tests "homes" #f passes interp-Lvar "homes_test" (tests-for "homes"))
-; (interp-tests "patch" #f passes interp-Lvar "patch_test" (tests-for "patch"))
-; (interp-tests "precon" #f passes interp-Lvar "precon_test" (tests-for "precon"))
+(interp-tests "int" #f passes interp-Lvar "int_test" (tests-for "int"))
+
+(interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
+(interp-tests "rco" #f passes interp-Lvar "rco_test" (tests-for "rco"))
+(interp-tests "eco" #f passes interp-Lvar "eco_test" (tests-for "eco"))
+(interp-tests "insel" #f passes interp-Lvar "insel_test" (tests-for "insel"))
+(interp-tests "homes" #f passes interp-Lvar "homes_test" (tests-for "homes"))
+(interp-tests "patch" #f passes interp-Lvar "patch_test" (tests-for "patch"))
+(interp-tests "precon" #f passes interp-Lvar "precon_test" (tests-for "precon"))
 
 
 

@@ -1,7 +1,15 @@
 #lang racket
+(require racket/set racket/stream)
 (require graph)
+(require racket/fixnum)
+(require "interp-Lint.rkt")
+(require "interp-Lvar.rkt")
+(require "interp-Cvar.rkt")
+(require "interp.rkt")
+(require "type-check-Lvar.rkt")
+(require "type-check-Cvar.rkt")
 (require "utilities.rkt")
-(provide (all-defined-out))
+(require "priority_queue.rkt")
 (require "compiler.rkt")
 
 ;;; test exercise 3.3
@@ -33,7 +41,6 @@
 (define p2 (build-interference p1))
 
 (define g (graph-of-program-start p2))
-(display (graphviz g))
-    
-    
-    
+(define res (color-graph g (vars-in-graph g)))
+
+(define p3 (allocate-registers p2))
