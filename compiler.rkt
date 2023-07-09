@@ -339,7 +339,7 @@
     [(Jmp label) (list (Jmp label) homes)]
     [else (error 'assign-instr)]))
 
-(define (ceil-16 n)
+(define (align16 n)
   (let ([m (modulo n 16)])
     (if (zero? m)
         n
@@ -352,7 +352,7 @@
      (let loop ([instrs instrs] [new-instrs '()] [homes '()])
        (if (null? instrs)
            (let ([top (if (null? homes) 0 (cdar homes))])
-             (list (ceil-16(- top)) (reverse new-instrs)))
+             (list (align16(- top)) (reverse new-instrs)))
            (let ([res (assign-instr (car instrs) locals-types homes)])
              (loop (cdr instrs) (cons (car res) new-instrs) (cadr res)))))]
     [else (error 'assign-block "~s" block)]))
@@ -392,12 +392,20 @@
     [(Instr name (list (Deref reg1 n1) (Deref reg2 n2))) #t]
     [else #f]))
 
-(define (deref-equal? deref1 deref2)
-  (match* (deref1 deref2)
-    [((Deref reg1 offset1) (Deref reg2 offset2))
-     (and (eqv? reg1 reg2)
-          (eqv? offset1 offset2))]
+(define (arg-equal? arg1 arg2)
+  (match* (arg1 arg2)
+    [((Var name1) (Var name2)) (eqv? name1 name2)]
+    [((Reg name1) (Reg name2)) (eqv? name1 name2)]
+    [((Imm n1) (Imm n2)) (eqv? n1 n2)]
+    [((Deref name1 offset1) (Deref name2 offset2)) (and (eqv? name1 name2)
+                                                        (eqv? offset1 offset2))]
     [(_ _) #f]))
+
+(define (trival-mov? instr)
+  (match instr
+    [(Instr 'movq (list arg1 arg2))
+     (arg-equal? arg1 arg2)]
+    [else #f]))
 
 (define (patch-instr instr)
   (match instr
@@ -408,10 +416,8 @@
      (list (Instr 'movq (list deref1 (Reg 'rax)))
            (Instr 'subq (list (Reg 'rax) deref2)))]
     [(Instr 'movq (list deref1 deref2))
-     (if (deref-equal? deref1 deref2) ; trival moves
-         #f
-         (list (Instr 'movq (list deref1 (Reg 'rax)))
-               (Instr 'movq (list (Reg 'rax) deref2))))]))
+     (list (Instr 'movq (list deref1 (Reg 'rax)))
+           (Instr 'movq (list (Reg 'rax) deref2)))]))
 
 ; (define (patch-instr instr)
 ;   (match instr
@@ -430,12 +436,12 @@
      (Block info (let loop ([instrs instrs] [new-instrs '()])
                    (if (null? instrs)
                        (reverse new-instrs)
-                       (if (deref-args-instr? (first instrs))
-                           (let ([patched-instrs (patch-instr (first instrs))])
-                             (if patched-instrs
-                                 (loop (rest instrs) (append (reverse patched-instrs) new-instrs))
-                                 (loop (rest instrs) new-instrs)))
-                           (loop (rest instrs) (cons (first instrs) new-instrs))))))]
+                       (if (trival-mov? (first instrs))
+                           (loop (rest instrs) new-instrs)
+                           (if (deref-args-instr? (first instrs))
+                               (let ([patched-instrs (patch-instr (first instrs))])
+                                 (loop (rest instrs) (append (reverse patched-instrs) new-instrs)))
+                               (loop (rest instrs) (cons (first instrs) new-instrs)))))))]
     [else (error "patch")]))
 
 ;; patch-instructions : psuedo-x86 -> x86
@@ -446,17 +452,18 @@
                         (cons (car label&block)
                               (patch (cdr label&block)))))]))
 ; (error "TODO: code goes here (patch-instructions)"))
+(define (prelude used-callee frame-sub)
+  (Block '() (append (list (Instr 'pushq (list (Reg 'rbp)))
+                           (Instr 'movq (list (Reg 'rsp) (Reg 'rbp))))
+                     (append (map (lambda (reg) (Instr 'pushq (list (Reg reg)))) used-callee)
+                             (list (Instr 'subq (list (Imm frame-sub) (Reg 'rsp)))
+                                   (Jmp 'start))))))
 
-(define (prelude space)
-  (Block '() (list (Instr 'pushq (list (Reg 'rbp)))
-                   (Instr 'movq (list (Reg 'rsp) (Reg 'rbp)))
-                   (Instr 'subq (list (Imm space) (Reg 'rsp)))
-                   (Jmp 'start))))
-
-(define (conclusion space)
-  (Block '() (list (Instr 'addq (list (Imm space) (Reg 'rsp)))
-                   (Instr 'popq (list (Reg 'rbp)))
-                   (Retq))))
+(define (conclusion used-callee frame-sub)
+  (Block '() (cons (Instr 'addq (list (Imm frame-sub) (Reg 'rsp)))
+                   (append (map (lambda (reg) (Instr 'popq (list (Reg reg)))) used-callee)
+                           (list (Instr 'popq (list (Reg 'rbp)))
+                                 (Retq))))))
 
 (define (prefix-underscore label)
   (string->symbol (string-append "_" (symbol->string label))))
@@ -484,14 +491,48 @@
                                 (cons new-label (if-macosx-block block))))))])
       p))
 ;; prelude-and-conclusion : x86 -> x86
+; (define (prelude-and-conclusion p)
+;   (match p
+;     [(X86Program info label&blocks)
+;      (let ([start-space (dict-ref (dict-ref info 'stack-space) 'start)])
+;        (if-macosx (X86Program info
+;                               (cons (cons 'main (prelude start-space))
+;                                     (append label&blocks
+;                                             (list (cons 'conclusion (conclusion start-space))))))))]))
+
+(define (re-offset-instr instr used-callee-space)
+  
+  (define (re-offset-arg arg)
+    (match arg
+           [(Deref reg offset) (Deref reg (- offset used-callee-space))]
+           [else arg]))
+  
+  (match instr
+         [(Instr name args)
+          (Instr name (map re-offset-arg args))]
+         [else instr]))
+
+(define (re-offset-start label&blocks used-callee-space)
+  (let ([labels (map car label&blocks)] [blocks (map cdr label&blocks)])
+    (for/list ([label labels] [block blocks])
+          (if (eqv? label 'start)
+              (cons label (match block
+                                 [(Block info instrs)
+                                  (Block info
+                                         (map (lambda (instr) (re-offset-instr instr used-callee-space))
+                                              instrs))]))
+              (cons label block)))))
+
 (define (prelude-and-conclusion p)
   (match p
     [(X86Program info label&blocks)
-     (let ([start-space (dict-ref (dict-ref info 'stack-space) 'start)])
-       (if-macosx (X86Program info
-                              (cons (cons 'main (prelude start-space))
-                                    (append label&blocks
-                                            (list (cons 'conclusion (conclusion start-space))))))))]))
+     (let ([used-callee (dict-ref info 'used-callee)] [spill-space (dict-ref info 'spill-space)])
+       (let ([used-callee-space (* 8 (length used-callee))])
+         (let ([frame-sub (- (align16 (+ used-callee-space spill-space)) used-callee-space)])
+           (if-macosx (X86Program info
+                                  (cons (cons 'main (prelude used-callee frame-sub))
+                                        (append (re-offset-start label&blocks used-callee-space)
+                                                (list (cons 'conclusion (conclusion used-callee frame-sub))))))))))]))
 
 ; (define (pe-exp-lvar env e)
 ;   (match e
@@ -720,9 +761,14 @@
          (set-Vertex-staturation! vertex new-staturation)
          vertex))]))
 
+; (define the-reg-color-map
+;   '((rcx . 0) (rdx . 1) (rsi . 2) (rdi . 3) (r8 . 4) (r9 . 5)
+;               (r10 . 6) (rbx . 7) (r12 . 8) (r13 . 9) (r14 . 10)
+;               (rax . -1) (rsp . -2) (rbp . -3) (r11 . -4) (r15 . -5)))
+
+;;; for test, page 50
 (define the-reg-color-map
-  '((rcx . 0) (rdx . 1) (rsi . 2) (rdi . 3) (r8 . 4) (r9 . 5)
-              (r10 . 6) (rbx . 7) (r12 . 8) (r13 . 9) (r14 . 10)
+  '((rcx . 0) (rbx . 1)
               (rax . -1) (rsp . -2) (rbp . -3) (r11 . -4) (r15 . -5)))
 
 (define (reg-of-the-reg-color-map color)
@@ -860,6 +906,7 @@
           (sequence->list (in-vertices g))))
 
 (define (allocate-registers p)
+  (define REG-AVALIABLE 2)
   (define (build-var-map color-map reg-avaliable)
     (let loop ([color-map color-map] [var-map '()])
       (if (null? color-map)
@@ -897,14 +944,40 @@
             (cons label (assign-location block var-map))
             (cons label block)))))
 
+  (define (written-callee-start body)
+    (let ([block (dict-ref body 'start)])
+      (match block
+        [(Block info instrs)
+         (filter (lambda (reg)
+                   (and (member reg callee-saved)
+                        (not (eqv? 'rbp reg))))
+                 (set->list (foldl (lambda (writes res) (set-union writes res))
+                                   (set)
+                                   (map write-instr instrs))))])))
+
+  (define (calc-spill-space var-map)
+    (let loop ([space 0] [var-map var-map])
+      (if (null? var-map)
+          space
+          (match (cdr (first var-map))
+            [(Reg name) (loop space (rest var-map))]
+            [(Deref name offset)
+             (loop (max space (- offset)) (rest var-map))]
+            [else (error "calc-spill-space: ~s" (first var-map))]))))
+
   (match p
     [(X86Program info body)
      (let* ([g-start (dict-ref (dict-ref info 'conflicts) 'start)]
             [vars (vars-in-graph g-start)]
             [color-map (color-graph g-start vars)]
-            [var-map (build-var-map color-map 1)]
-            [new-body (allocate-reg-start-body var-map body)])
-       (X86Program info new-body))]))
+            [var-map (build-var-map color-map REG-AVALIABLE)]
+            [new-body (allocate-reg-start-body var-map body)]
+            [used-callee (written-callee-start new-body)]
+            [spill-space (calc-spill-space var-map)])
+       (X86Program (append (list (cons 'spill-space spill-space))
+                           (list (cons 'used-callee used-callee))
+                           info)
+                   new-body))]))
 
 
 ; (define p (read-program "./examples/p9.example"))
