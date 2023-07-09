@@ -278,8 +278,8 @@
 (define (insts-tail c-var-ele)
   (match c-var-ele
     [(Return e)
-    ;  (displayln e)
-    ;  (displayln (insts-exp e))
+     ;  (displayln e)
+     ;  (displayln (insts-exp e))
      (append (insts-exp e) (list (Jmp 'conclusion)))]
     [(Seq stmt tail) (append (insts-stmt stmt) (insts-tail tail))]
     [else (error 'insts-tail)]))
@@ -392,6 +392,13 @@
     [(Instr name (list (Deref reg1 n1) (Deref reg2 n2))) #t]
     [else #f]))
 
+(define (deref-equal? deref1 deref2)
+  (match* (deref1 deref2)
+    [((Deref reg1 offset1) (Deref reg2 offset2))
+     (and (eqv? reg1 reg2)
+          (eqv? offset1 offset2))]
+    [(_ _) #f]))
+
 (define (patch-instr instr)
   (match instr
     [(Instr 'addq (list deref1 deref2))
@@ -401,8 +408,10 @@
      (list (Instr 'movq (list deref1 (Reg 'rax)))
            (Instr 'subq (list (Reg 'rax) deref2)))]
     [(Instr 'movq (list deref1 deref2))
-     (list (Instr 'movq (list deref1 (Reg 'rax)))
-           (Instr 'movq (list (Reg 'rax) deref2)))]))
+     (if (deref-equal? deref1 deref2) ; trival moves
+         #f
+         (list (Instr 'movq (list deref1 (Reg 'rax)))
+               (Instr 'movq (list (Reg 'rax) deref2))))]))
 
 ; (define (patch-instr instr)
 ;   (match instr
@@ -421,10 +430,12 @@
      (Block info (let loop ([instrs instrs] [new-instrs '()])
                    (if (null? instrs)
                        (reverse new-instrs)
-                       (if (deref-args-instr? (car instrs))
-                           (let ([patched-instrs (patch-instr (car instrs))])
-                             (loop (cdr instrs) (append (reverse patched-instrs) new-instrs)))
-                           (loop (cdr instrs) (cons (car instrs) new-instrs))))))]
+                       (if (deref-args-instr? (first instrs))
+                           (let ([patched-instrs (patch-instr (first instrs))])
+                             (if patched-instrs
+                                 (loop (rest instrs) (append (reverse patched-instrs) new-instrs))
+                                 (loop (rest instrs) new-instrs)))
+                           (loop (rest instrs) (cons (first instrs) new-instrs))))))]
     [else (error "patch")]))
 
 ;; patch-instructions : psuedo-x86 -> x86

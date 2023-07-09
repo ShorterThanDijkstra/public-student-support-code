@@ -45,8 +45,8 @@
         (list "uncover live" uncover-live interp-pseudo-x86-0)
         (list "build interference" build-interference interp-pseudo-x86-0)
         (list "allocate registers" allocate-registers interp-x86-0)
-        ; (list "patch instructions" patch-instructions interp-x86-0)
-        ; (list "prelude and conclusion" prelude-and-conclusion interp-x86-0)
+        (list "patch instructions" patch-instructions interp-x86-0)
+        (list "prelude and conclusion" prelude-and-conclusion interp-x86-0)
         ))
 
 ; (debug-level 1) 
