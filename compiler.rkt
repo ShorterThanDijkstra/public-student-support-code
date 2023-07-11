@@ -1040,17 +1040,43 @@
 ; (define p9 (prelude-and-conclusion p8))
 ; (display (print-x86 p9))
 
+(define (shrink-expr expr)
+  (match expr
+    [(Int n) (Int n)]
+    [(Var sym) (Var sym)]
+    [(Bool b) (Bool b)]
+    [(Let var rhs body)
+     (Let var (shrink-expr rhs) (shrink-expr body))]
+    [(If cnd thn els)
+     (If (shrink-expr cnd)
+         (shrink-expr thn)
+         (shrink-expr els))]
+    [(Prim 'and (list e1 e2))
+     (If (shrink-expr e1)
+         (shrink-expr e2)
+         (Bool #f))]
+    [(Prim 'or (list e1 e2))
+     (If (shrink-expr e1)
+         (Bool #t)
+         (shrink-expr e2))]
+    [(Prim op args) (Prim op (map shrink-expr args))]))
+    ;;; Lif -> Lif
+    (define (shrink p)
+      (match p
+        [(Program info expr)
+         (Program info (shrink-expr expr))]))
 
-;; Define the compiler passes to be used by interp-tests and the grader
-;; Note that your compiler file (the file that defines the passes)
-;; must be named "compiler.rkt"
-(define compiler-passes
-  `( ("partial eval" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
-     ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
-     ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
-     ("instruction selection" ,select-instructions ,interp-pseudo-x86-0)
-     ("assign homes" ,assign-homes ,interp-x86-0)
-     ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
-     ))
+
+    ;; Define the compiler passes to be used by interp-tests and the grader
+    ;; Note that your compiler file (the file that defines the passes)
+    ;; must be named "compiler.rkt"
+    (define compiler-passes
+      `( ("partial eval" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
+         ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
+         ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
+         ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
+         ("instruction selection" ,select-instructions ,interp-pseudo-x86-0)
+         ("assign homes" ,assign-homes ,interp-x86-0)
+         ("patch instructions" ,patch-instructions ,interp-x86-0)
+         ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+         ))
