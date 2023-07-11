@@ -1,14 +1,24 @@
 #lang racket
+(require racket/set racket/stream)
 (require graph)
+(require racket/fixnum)
+(require "interp-Lint.rkt")
+(require "interp-Lvar.rkt")
+(require "interp-Cvar.rkt")
+(require "interp.rkt")
+(require "type-check-Lvar.rkt")
+(require "type-check-Cvar.rkt")
 (require "utilities.rkt")
-(provide (all-defined-out))
+(require "priority_queue.rkt")
 (require "compiler.rkt")
 
 ;;; test exercise 3.3
 
 (define p0
   (X86Program
- '((locals-types (x . Integer) (y . Integer) (z . Integer) (v . Integer) (w . Integer) (t . Integer)))
+ '((locals-types (x . Integer) (y . Integer)
+                 (z . Integer) (v . Integer)
+                 (w . Integer) (t . Integer)))
  (list
   (cons
    'start
@@ -32,6 +42,8 @@
 
 (define p2 (build-interference p1))
 
-(define g (graph-of-program-start p2))
+(define p3 (allocate-registers p2))
 
-(display (graphviz g))
+(define p4 (patch-instructions p3))
+
+(define p5 (prelude-and-conclusion p4))

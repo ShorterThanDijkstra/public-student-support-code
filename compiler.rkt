@@ -501,27 +501,27 @@
 ;                                             (list (cons 'conclusion (conclusion start-space))))))))]))
 
 (define (re-offset-instr instr used-callee-space)
-  
+
   (define (re-offset-arg arg)
     (match arg
-           [(Deref reg offset) (Deref reg (- offset used-callee-space))]
-           [else arg]))
-  
+      [(Deref reg offset) (Deref reg (- offset used-callee-space))]
+      [else arg]))
+
   (match instr
-         [(Instr name args)
-          (Instr name (map re-offset-arg args))]
-         [else instr]))
+    [(Instr name args)
+     (Instr name (map re-offset-arg args))]
+    [else instr]))
 
 (define (re-offset-start label&blocks used-callee-space)
   (let ([labels (map car label&blocks)] [blocks (map cdr label&blocks)])
     (for/list ([label labels] [block blocks])
-          (if (eqv? label 'start)
-              (cons label (match block
-                                 [(Block info instrs)
-                                  (Block info
-                                         (map (lambda (instr) (re-offset-instr instr used-callee-space))
-                                              instrs))]))
-              (cons label block)))))
+      (if (eqv? label 'start)
+          (cons label (match block
+                        [(Block info instrs)
+                         (Block info
+                                (map (lambda (instr) (re-offset-instr instr used-callee-space))
+                                     instrs))]))
+          (cons label block)))))
 
 (define (prelude-and-conclusion p)
   (match p
@@ -761,15 +761,15 @@
          (set-Vertex-staturation! vertex new-staturation)
          vertex))]))
 
-; (define the-reg-color-map
-;   '((rcx . 0) (rdx . 1) (rsi . 2) (rdi . 3) (r8 . 4) (r9 . 5)
-;               (r10 . 6) (rbx . 7) (r12 . 8) (r13 . 9) (r14 . 10)
-;               (rax . -1) (rsp . -2) (rbp . -3) (r11 . -4) (r15 . -5)))
+(define the-reg-color-map
+  '((rcx . 0) (rdx . 1) (rsi . 2) (rdi . 3) (r8 . 4) (r9 . 5)
+              (r10 . 6) (rbx . 7) (r12 . 8) (r13 . 9) (r14 . 10)
+              (rax . -1) (rsp . -2) (rbp . -3) (r11 . -4) (r15 . -5)))
 
 ;;; for test, page 50
-(define the-reg-color-map
-  '((rcx . 0) (rbx . 1)
-              (rax . -1) (rsp . -2) (rbp . -3) (r11 . -4) (r15 . -5)))
+; (define the-reg-color-map
+;   '((rcx . 0) (rbx . 1)
+;               (rax . -1) (rsp . -2) (rbp . -3) (r11 . -4) (r15 . -5)))
 
 (define (reg-of-the-reg-color-map color)
   (let loop ([reg-color-map the-reg-color-map])
@@ -786,14 +786,41 @@
       (and (pred (first lst))
            (every? pred (rest lst)))))
 
-(define (color-graph g vars)
+
+(define (color-graph g vars program)
   (define NOCOLOR '-)
-  (define (cmp v1 v2)
-    (let ([len1 (length (Vertex-staturation v1))]
-          [len2 (length (Vertex-staturation v2))])
-      (if (= len1 len2)
-          (symbol<? (Vertex-name v1) (Vertex-name v2))
-          (> len1 len2))))
+  (define (make-cmp move-related-graph)
+    (lambda (v1 v2)
+      (let ([len1 (length (Vertex-staturation v1))]
+            [len2 (length (Vertex-staturation v2))])
+        (if (= len1 len2)
+            (let ([name1 (Vertex-name v1)] [name2 (Vertex-name v2)])
+              (let ([neighbors-move-related-v1
+                     (if (has-vertex? move-related-graph name1)
+                         (sequence->list (in-neighbors move-related-graph name1))
+                         '())]
+                    [neighbors-move-related-v2
+                     (if (has-vertex? move-related-graph name2)
+                         (sequence->list (in-neighbors move-related-graph name2))
+                         '())])
+                (let ([related-len1 (length neighbors-move-related-v1)]
+                      [related-len2 (length neighbors-move-related-v2)])
+                  (if (= related-len1 related-len2)
+                      (symbol<? name1 name2) ; text book
+                      (> related-len1 related-len2)))))
+            (> len1 len2)))))
+
+  (define (build-move-related-graph)
+    (match program
+      [(X86Program info body)
+       (let loop ([edges '()] [instrs (Block-instr* (dict-ref body 'start))])
+         (if (null? instrs)
+             (undirected-graph edges)
+             (let ([instr (first instrs)])
+               (match instr
+                 [(Instr 'movq (list (Var name1) (Var name2)))
+                  (loop (cons (list name1 name2) edges) (rest instrs))]
+                 [else (loop edges (rest instrs))]))))]))
 
   (define (update-queue! que handle-map vertex)
     (let ([name (Vertex-name vertex)])
@@ -823,27 +850,47 @@
         (fill-staturation-vertex! var neighbors vertex-map handle-map que))))
 
   (define (init!)
-    (let ([que (make-pqueue cmp)]) ; 存放未着色节点
-      (let loop ([vs vars] [vertex-map '()] [handle-map '()])
-        (if (null? vs)
-            (begin (fill-staturation-graph! g vars vertex-map handle-map que) (values que vertex-map handle-map))
-            (let ([color (dict-ref the-reg-color-map (first vs) NOCOLOR)])
-              (let ([vertex (Vertex (first vs) color '())])
-                (if (eqv? color NOCOLOR)
-                    (let ([handle  (pqueue-push! que vertex)])
+    (let ([move-related-graph (build-move-related-graph)])
+      ; (displayln (graphviz move-related-graph))
+      (let ([que (make-pqueue (make-cmp move-related-graph))]) ; 存放未着色节点
+        (let loop ([vs vars] [vertex-map '()] [handle-map '()])
+          (if (null? vs)
+              (begin (fill-staturation-graph! g vars vertex-map handle-map que)
+                     (values que vertex-map handle-map move-related-graph))
+              (let ([color (dict-ref the-reg-color-map (first vs) NOCOLOR)])
+                (let ([vertex (Vertex (first vs) color '())])
+                  (if (eqv? color NOCOLOR)
+                      (let ([handle  (pqueue-push! que vertex)])
+                        (loop (rest vs)
+                              (cons (cons (first vs) vertex) vertex-map)
+                              (cons (cons (first vs) handle) handle-map)))
                       (loop (rest vs)
                             (cons (cons (first vs) vertex) vertex-map)
-                            (cons (cons (first vs) handle) handle-map)))
-                    (loop (rest vs)
-                          (cons (cons (first vs) vertex) vertex-map)
-                          handle-map))))))))
+                            handle-map)))))))))
 
-  (define (next-color staturation)
-    (let loop ([color 0])
-      ; (display color)
-      (if (member color staturation)
-          (loop (+ color 1))
-          color)))
+  (define (next-color v-name staturation move-related-graph vertex-map)
+    (define (move-related-color)
+      (let ([related (if (has-vertex? move-related-graph v-name)
+                         (sequence->list (in-neighbors move-related-graph v-name))
+                         '())])
+        (let loop ([related related])
+          (if (null? related)
+              #f
+              (let ([related-vertex (dict-ref vertex-map (first related))])
+                (let ([related-color (Vertex-color related-vertex)])
+                  (if (eqv? related-color NOCOLOR)
+                      (loop (rest related))
+                      (if (member related-color staturation)
+                          (loop (rest related))
+                          related-color))))))))
+
+    (let ([related-color (move-related-color)])
+      (if related-color
+          related-color
+          (let loop ([color 0])
+            (if (member color staturation)
+                (loop (+ color 1))
+                color)))))
 
   (define (update-neighbors-staturation! vertex vertex-map handle-map que)
     ; (displayln vertex-map)
@@ -875,7 +922,7 @@
   ;   (let ([neighbors (sequence->list (in-neighbors g (Vertex-name vertex)))])
   ;     (every? check-1 (map (lambda (v) (dict-ref vertex-map v)) neighbors))))
 
-  (define (dsatur-color! que vertex-map handle-map)
+  (define (dsatur-color! que vertex-map handle-map move-related-graph)
     (if (zero? (pqueue-count que))
         vertex-map
         (let ([vertex (pqueue-pop! que)])
@@ -883,30 +930,28 @@
             [(Vertex name color staturation)
              (if (not (eqv? color NOCOLOR))
                  (error 'dsatur-color!)
-                 (let ([new-color (next-color staturation)])
+                 (let ([new-color (next-color name staturation move-related-graph vertex-map)])
                    (begin
                      (set-Vertex-color! vertex new-color)
                      (update-neighbors-staturation! vertex vertex-map handle-map que)
-                     (dsatur-color! que vertex-map handle-map))))])))) ; what if fail to color graph?
+                     (dsatur-color! que vertex-map handle-map move-related-graph))))])))) ; what if fail to color graph?
 
-  (define-values (que vertex-map handle-map) (init!))
+  (define-values (que vertex-map handle-map move-related-graph) (init!))
 
-  (let ([vertex-map (dsatur-color! que vertex-map handle-map)])
+  (let ([vertex-map (dsatur-color! que vertex-map handle-map move-related-graph)])
     (let loop ([vertex-map vertex-map] [color-map '()])
       (if (null? vertex-map)
           color-map
           (let ([var (car (first vertex-map))]
                 [color (Vertex-color (cdr (first vertex-map)))])
-            (loop (rest vertex-map) (cons (cons var color) color-map))))))
-  )
-
+            (loop (rest vertex-map) (cons (cons var color) color-map)))))))
 
 (define (vars-in-graph g)
   (filter (lambda (v) (> (length (sequence->list (in-neighbors g v))) 0))
           (sequence->list (in-vertices g))))
 
 (define (allocate-registers p)
-  (define REG-AVALIABLE 2)
+  (define REG-AVALIABLE 11)
   (define (build-var-map color-map reg-avaliable)
     (let loop ([color-map color-map] [var-map '()])
       (if (null? color-map)
@@ -969,7 +1014,7 @@
     [(X86Program info body)
      (let* ([g-start (dict-ref (dict-ref info 'conflicts) 'start)]
             [vars (vars-in-graph g-start)]
-            [color-map (color-graph g-start vars)]
+            [color-map (color-graph g-start vars p)]
             [var-map (build-var-map color-map REG-AVALIABLE)]
             [new-body (allocate-reg-start-body var-map body)]
             [used-callee (written-callee-start new-body)]

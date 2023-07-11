@@ -11,6 +11,7 @@
 (require "utilities.rkt")
 (require "priority_queue.rkt")
 (require "compiler.rkt")
+(require "graph-printing.rkt")
 
 ;;; test exercise 3.3
 
@@ -41,6 +42,7 @@
 (define p2 (build-interference p1))
 
 (define g (graph-of-program-start p2))
-(define res (color-graph g (vars-in-graph g)))
+
+(define res (color-graph g (vars-in-graph g) p2))
 
 (define p3 (allocate-registers p2))
