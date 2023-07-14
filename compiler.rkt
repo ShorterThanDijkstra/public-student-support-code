@@ -76,19 +76,19 @@
   (lambda (e)
     (match e
       [(Var x)
-       (Var (dict-ref env x))
-       ;  (error "TODO: code goes here (uniquify-exp, symbol?)")
-       ]
+       (Var (dict-ref env x))]
       [(Int n) (Int n)]
+      [(Bool b) (Bool b)]
       [(Let x e body)
-       ;  (error "TODO: code goes here (uniquify-exp, let)")
        (let ([new_x (gen-sym x)])
          (let ([new_env (dict-set env x new_x)])
            (Let new_x
                 ((uniquify-exp env) e)
-                ((uniquify-exp new_env) body))))
-
-       ]
+                ((uniquify-exp new_env) body))))]
+      [(If cnd thn els)
+       (If ((uniquify-exp env) cnd)
+           ((uniquify-exp env) thn)
+           ((uniquify-exp env) els))]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))])))
 
@@ -162,10 +162,15 @@
   (match e
     [(Var x) (Var x)]
     [(Int n) (Int n)]
+    [(Bool b) (Bool b)]
     [(Let x e body)
      (Let x
           (rco-exp e)
           (rco-exp body))]
+    [(If cnd thn els)
+     (If (rco-exp cnd)
+         (rco-exp thn)
+         (rco-exp els))]
     [(Prim op es)
      (let loop ([es es] [atoms '()])
        (if (null? es)
@@ -185,26 +190,66 @@
 ; [(Program info e) (Program info (anf-exp (rco-exp e)))]))
 ; (error "TODO: code goes here (remove-complex-opera*)"))
 
+(define basic-blocks '())
+
+(define (create-block tail)
+  (match tail
+    [(Goto label) (Goto label)]
+    [else
+     (let ([label (gensym 'block)])
+       (set! basic-blocks (cons (cons label tail) basic-blocks))
+       (Goto label))]))
+
+(define (explicate-pred cnd thn els)
+  (match cnd
+    [(Var x)
+     (let ([thn-goto (create-block thn)]
+           [els-goto (create-block els)])
+       (IfStmt cnd thn-goto els-goto))]
+    [(Let x rhs body)
+     (let ([body-var (gen-sym 'tmp)])
+       (explicate-assign rhs x
+                         (explicate-pred body thn els)))]
+    [(Prim 'not (list e)) (explicate-pred e els thn)]
+    [(Prim op es) #:when (or (eq? op 'eq?) (eq? op '<)
+                             (eq? op '<=) (eq? op '>) (eq? op '>=))
+                  (IfStmt (Prim op es) (create-block thn)
+                          (create-block els))]
+    [(Bool b) (if b thn els)]
+    [(If cnd^ thn^ els^)
+     (let ([thn-goto (create-block thn)] 
+           [els-goto (create-block els)]) 
+      (let ([thn^-goto (create-block (explicate-pred thn^ thn-goto els-goto))]
+             [els^-goto (create-block (explicate-pred els^ thn-goto els-goto))])
+         (explicate-pred cnd^ thn^-goto els^-goto)))]
+    [else (error "explicate-pred unhandled case" cnd)]))
+
 (define (explicate-tail e)
   (match e
     [(Var x) (Return e)]
     [(Int n) (Return e)]
+    [(Bool b) (Return e)]
     [(Prim op es) (Return e)]
     [(Let x rhs body) (explicate-assign rhs x (explicate-tail body))]
-    [else (error "explicate_tail unhandled case" e)]))
+    [(If cnd thn els) (explicate-pred cnd (explicate-tail thn) (explicate-tail els))]
+    [else (error "explicate-tail unhandled case" e)]))
 
 (define (explicate-assign e x cont)
   (match e
-    [(Var _) (Seq (Assign (Var x) e) cont)]
-    [(Int _) (Seq (Assign (Var x) e) cont)]
+    [(Var x) (Seq (Assign (Var x) e) cont)]
+    [(Int n) (Seq (Assign (Var x) e) cont)]
+    [(Bool n) (Seq (Assign (Var x) e) cont)]
     [(Prim op es)  (Seq (Assign (Var x) e) cont)]
     [(Let y rhs body) (explicate-assign rhs y (explicate-assign body x cont))]
-    [else (error "explicate_assign unhandled case" e)]))
+    [(If cnd thn els) (let ([new-thn (explicate-assign thn x cont)]
+                            [new-els (explicate-assign els x cont)])
+                        (explicate-pred cnd new-thn new-els))]
+    [else (error "explicate-assign unhandled case" e)]))
 
 ; ;; explicate-control : R1 -> C0
 (define (explicate-control p)
   (match p [(Program info body)
-            (CProgram info (list (cons 'start (explicate-tail body))))]))
+            (CProgram info (cons (cons 'start (explicate-tail body)) basic-blocks))]))
 ;   (error "TODO: code goes here (explicate-control)"))
 
 (define (insts-atm c-var-ele)
@@ -1060,23 +1105,23 @@
          (Bool #t)
          (shrink-expr e2))]
     [(Prim op args) (Prim op (map shrink-expr args))]))
-    ;;; Lif -> Lif
-    (define (shrink p)
-      (match p
-        [(Program info expr)
-         (Program info (shrink-expr expr))]))
 
+;;; Lif -> Lif
+(define (shrink p)
+  (match p
+    [(Program info expr)
+     (Program info (shrink-expr expr))]))
 
-    ;; Define the compiler passes to be used by interp-tests and the grader
-    ;; Note that your compiler file (the file that defines the passes)
-    ;; must be named "compiler.rkt"
-    (define compiler-passes
-      `( ("partial eval" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
-         ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
-         ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
-         ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
-         ("instruction selection" ,select-instructions ,interp-pseudo-x86-0)
-         ("assign homes" ,assign-homes ,interp-x86-0)
-         ("patch instructions" ,patch-instructions ,interp-x86-0)
-         ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
-         ))
+;; Define the compiler passes to be used by interp-tests and the grader
+;; Note that your compiler file (the file that defines the passes)
+;; must be named "compiler.rkt"
+(define compiler-passes
+  `( ("partial eval" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
+     ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
+     ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
+     ("instruction selection" ,select-instructions ,interp-pseudo-x86-0)
+     ("assign homes" ,assign-homes ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+     ))

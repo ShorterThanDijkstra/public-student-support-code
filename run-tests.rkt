@@ -10,6 +10,9 @@
 (require "type-check-Cvar.rkt")
 (require "type-check-Lif.rkt")
 (require "interp-Lif.rkt")
+(require "interp-Cif.rkt")
+(require "type-check-Cif.rkt")
+
 
 ;; (debug-level 1)
 ;; (AST-output-syntax 'concrete-syntax)
@@ -51,7 +54,7 @@
 ;         (list "prelude and conclusion" prelude-and-conclusion interp-x86-0)
 ;         ))
 
-(debug-level 1) 
+(debug-level 1)
 ; (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
 ; (interp-tests "int" #f passes interp-Lvar "int_test" (tests-for "int"))
 ; (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
@@ -63,9 +66,15 @@
 ; (interp-tests "precon" #f passes interp-Lvar "precon_test" (tests-for "precon"))
 
 (define passes
-  (list (list "shrink" shrink interp-Lif type-check-Lif)))
+  (list (list "shrink" shrink interp-Lif type-check-Lif)
+        (list "uniquify" uniquify interp-Lif type-check-Lif)
+        (list "remove-complex" remove-complex-opera* interp-Lif type-check-Lif)
+        (list "explicate-control" explicate-control interp-Cif type-check-Cif)))
+
 ; (interp-tests "cond" type-check-Lif passes interp-Lif "cond_test" (tests-for "cond"))
-(interp-tests "shrink test" type-check-Lif passes interp-Lif "shrink_test" (tests-for "shrink"))
+; (interp-tests "shrink test" type-check-Lif passes interp-Lif "shrink_test" (tests-for "shrink"))
+; (interp-tests "var" type-check-Lif passes interp-Lvar "var_test" (tests-for "var"))
+(interp-tests "eco" type-check-Lif passes interp-Lif "eco_test" (tests-for "eco"))
 
 
 ;; Uncomment the following when all the passes are complete to
