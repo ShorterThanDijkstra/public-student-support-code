@@ -24,4 +24,6 @@
 
 (define p4 (explicate-control p3))
 
+(define p5 (select-instructions p4))
+
 

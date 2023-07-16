@@ -68,18 +68,20 @@
 (define passes
   (list (list "shrink" shrink interp-Lif type-check-Lif)
         (list "uniquify" uniquify interp-Lif type-check-Lif)
-        (list "remove-complex" remove-complex-opera* interp-Lif type-check-Lif)
-        (list "explicate-control" explicate-control interp-Cif type-check-Cif)))
+        (list "remove complex" remove-complex-opera* interp-Lif type-check-Lif)
+        (list "explicate control" explicate-control interp-Cif type-check-Cif)
+        (list "select instructions" select-instructions interp-pseudo-x86-1)))
 
 ; (interp-tests "cond" type-check-Lif passes interp-Lif "cond_test" (tests-for "cond"))
 ; (interp-tests "shrink test" type-check-Lif passes interp-Lif "shrink_test" (tests-for "shrink"))
 ; (interp-tests "var" type-check-Lif passes interp-Lvar "var_test" (tests-for "var"))
-(interp-tests "eco" type-check-Lif passes interp-Lif "eco_test" (tests-for "eco"))
+; (interp-tests "eco" type-check-Lif passes interp-Lif "eco_test" (tests-for "eco"))
+(interp-tests "insel" type-check-Lif passes interp-Lif "insel_test" (tests-for "insel"))
 
 
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
 ; (compiler-tests "var" #f passes "var_test" (tests-for "var"))
-; (compiler-tests "cond" type-check-Lif passes "cond_test" (tests-for "cond"))
+; (compiler-tests "eco" type-check-Lif passes "eco_test" (tests-for "eco"))
 
 

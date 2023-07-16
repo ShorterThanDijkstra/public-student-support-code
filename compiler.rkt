@@ -205,7 +205,8 @@
     [(Var x)
      (let ([thn-goto (create-block thn)]
            [els-goto (create-block els)])
-       (IfStmt cnd thn-goto els-goto))]
+       ;  (IfStmt cnd thn-goto els-goto))] ;;; pred must be a Prim of cmp
+       (IfStmt (Prim 'eq? (list (Var x) (Bool #t))) thn-goto els-goto))]
     [(Let x rhs body)
      (let ([body-var (gen-sym 'tmp)])
        (explicate-assign rhs x
@@ -217,9 +218,9 @@
                           (create-block els))]
     [(Bool b) (if b thn els)]
     [(If cnd^ thn^ els^)
-     (let ([thn-goto (create-block thn)] 
-           [els-goto (create-block els)]) 
-      (let ([thn^-goto (create-block (explicate-pred thn^ thn-goto els-goto))]
+     (let ([thn-goto (create-block thn)]
+           [els-goto (create-block els)])
+       (let ([thn^-goto (create-block (explicate-pred thn^ thn-goto els-goto))]
              [els^-goto (create-block (explicate-pred els^ thn-goto els-goto))])
          (explicate-pred cnd^ thn^-goto els^-goto)))]
     [else (error "explicate-pred unhandled case" cnd)]))
@@ -256,6 +257,7 @@
   (match c-var-ele
     [(Int n)  (Imm n)]
     [(Var x) (Var x)]
+    [(Bool n) (if n (Imm 1) (Imm 0))]
     [else (error 'insts-atm)]))
 
 ; (define (insts-exp c-var-ele)
@@ -289,7 +291,28 @@
     [(Prim '- (list atm1 atm2))
      (list (Instr 'movq (list (insts-atm atm1) (Reg 'rax)))
            (Instr 'subq (list (insts-atm atm2) (Reg 'rax))))]
+    [(Prim 'not (list atm1))
+     (let ([arg1 (insts-atm atm1)])
+       (list (Instr 'movq (list arg1 (Reg 'rax)))
+             (Instr 'xorq (list (Imm 1) (Reg 'rax)))))]
+    [(Prim 'eq? (list atm1 atm2))
+     (instr-prim-cmp atm1 atm2 'e (Reg 'rax))]
+    [(Prim '< (list atm1 atm2))
+     (instr-prim-cmp atm1 atm2 'l (Reg 'rax))]
+    [(Prim '<= (list atm1 atm2))
+     (instr-prim-cmp atm1 atm2 'le (Reg 'rax))]
+    [(Prim '> (list atm1 atm2))
+     (instr-prim-cmp atm1 atm2 'g (Reg 'rax))]
+    [(Prim '>= (list atm1 atm2))
+     (instr-prim-cmp atm1 atm2 'ge (Reg 'rax))]
     [else (error 'insts-exp)]))
+
+(define (instr-prim-cmp atm1 atm2 cc to)
+  (let ([arg1 (insts-atm atm1)]
+        [arg2 (insts-atm atm2)])
+    (list (Instr 'cmpq (list arg2 arg1))
+          (Instr 'set (list cc (ByteReg 'al)))
+          (Instr 'movzbq (list (ByteReg 'al) to)))))
 
 (define (insts-stmt c-var-ele)
   (match c-var-ele
@@ -317,8 +340,41 @@
         (if (eq-var? atm1 x)
             (list (Inst 'subq (list (insts-atm atm2) (Var x))))
             (list (Instr 'movq (list (insts-atm atm1) (Var x)))
-                  (Instr 'subq (list (insts-atm atm2) (Var x)))))])]
+                  (Instr 'subq (list (insts-atm atm2) (Var x)))))]
+       [(Prim 'not (list atm1))
+        (match atm1
+          [(Var sym) #:when (eqv? sym x)
+                     (list (Instr 'xnorq (list (Imm 1) (Var sym))))]
+          [else (let ([arg1 (insts-atm atm1)])
+                  (list (Instr 'movq (list arg1 (Var x)))
+                        (Instr 'xorq (list (Imm 1) (Var x)))))])]
+       [(Prim 'eq? (list atm1 atm2))
+        (instr-prim-cmp atm1 atm2 'e (Var x))]
+       [(Prim '< (list atm1 atm2))
+        (instr-prim-cmp atm1 atm2 'l (Var x))]
+       [(Prim '<= (list atm1 atm2))
+        (instr-prim-cmp atm1 atm2 'le (Var x))]
+       [(Prim '> (list atm1 atm2))
+        (instr-prim-cmp atm1 atm2 'g (Var x))]
+       [(Prim '>= (list atm1 atm2))
+        (instr-prim-cmp atm1 atm2 'ge (Var x))])]
     [else (error 'insts-stmt)]))
+
+(define (instr-tail-prim-cmp atm1 atm2 thn-label els-label cmp)
+  (define (build arg1 arg2 cc)
+    (list (Instr 'cmpq (list arg2 arg1))
+          (JmpIf cc thn-label)
+          (Jmp els-label)))
+  (define (cmp->cc)
+    (match cmp
+      ['eq? 'e]
+      ['< 'l]
+      ['<= 'le]
+      ['> 'g]
+      ['>= 'ge]))
+  (let ([arg1 (insts-atm atm1)]
+        [arg2 (insts-atm atm2)])
+    (build arg1 arg2 (cmp->cc))))
 
 (define (insts-tail c-var-ele)
   (match c-var-ele
@@ -326,6 +382,9 @@
      ;  (displayln e)
      ;  (displayln (insts-exp e))
      (append (insts-exp e) (list (Jmp 'conclusion)))]
+    [(Goto label) (list (Jmp label))]
+    [(IfStmt (Prim cmp (list atm1 atm2)) (Goto thn-label) (Goto els-label))
+     (instr-tail-prim-cmp atm1 atm2 thn-label els-label cmp)]
     [(Seq stmt tail) (append (insts-stmt stmt) (insts-tail tail))]
     [else (error 'insts-tail)]))
 
@@ -333,9 +392,13 @@
   (match c-var-ele
     [(Int n) (insts-atm c-var-ele)]
     [(Var x) (insts-atm c-var-ele)]
-    [(Prim op es) (insts-atm c-var-ele)]
+    [(Bool b) (insts-atm c-var-ele)]
+    [(Prim op es) (insts-exp c-var-ele)]
     [(Assign (Var x) e) (insts-stmt  c-var-ele)]
     [(Return e) (insts-tail c-var-ele)]
+    [(Goto label) (insts-tail c-var-ele)]
+    [(IfStmt pred thn els)
+     (insts-tail c-var-ele)]
     [(Seq stmt tail) (insts-tail c-var-ele)]))
 
 ;; select-instructions : C0 -> pseudo-x86
