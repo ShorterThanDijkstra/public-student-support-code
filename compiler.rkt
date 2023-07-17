@@ -504,7 +504,8 @@
 
 (define (deref-args-instr? instr)
   (match instr
-    [(Instr name (list (Deref reg1 n1) (Deref reg2 n2))) #t]
+    [(Instr 'movq (list (Deref reg1 n1) (Deref reg2 n2))) #t]
+    [(Instr 'movzbq (list (Deref reg1 n1) (Deref reg2 n2))) #t]
     [else #f]))
 
 (define (arg-equal? arg1 arg2)
@@ -518,7 +519,7 @@
 
 (define (trival-mov? instr)
   (match instr
-    [(Instr 'movq (list arg1 arg2))
+    [(Instr name (list arg1 arg2))
      (arg-equal? arg1 arg2)]
     [else #f]))
 
@@ -532,8 +533,26 @@
            (Instr 'subq (list (Reg 'rax) deref2)))]
     [(Instr 'movq (list deref1 deref2))
      (list (Instr 'movq (list deref1 (Reg 'rax)))
-           (Instr 'movq (list (Reg 'rax) deref2)))]))
+           (Instr 'movq (list (Reg 'rax) deref2)))]
+    [(Instr 'movzbq (list deref1 deref2))
+     (list (Instr 'movzbq (list deref1 (Reg 'rax)))
+           (Instr 'movq (list (Reg 'rax) deref2)))]
+    [(Instr 'cmpq (list deref1 deref2))
+     (list (Instr 'movq (list deref1 (Reg 'rax)))
+           (Instr 'cmpq (list (Reg 'rax) deref2)))]
+    [else (error 'patch-instr)]))
 
+(define (problematic-cmpq? instr)
+  (match instr
+    [(Instr 'cmpq (list arg1 (Imm n2))) #t]
+    [else #f]))
+
+(define (patch-problematic-cmpq instr)
+  (match instr
+    [(Instr 'cmpq (list arg1 (Imm n2)))
+     (list (Instr 'movq (list (Imm n2) (Reg 'rax)))
+           (Instr 'cmpq (list arg1 (Reg 'rax))))]
+    [else (error 'patch-problematic-cmpq)]))
 ; (define (patch-instr instr)
 ;   (match instr
 ;     [(Instr name args)
@@ -551,12 +570,15 @@
      (Block info (let loop ([instrs instrs] [new-instrs '()])
                    (if (null? instrs)
                        (reverse new-instrs)
-                       (if (trival-mov? (first instrs))
-                           (loop (rest instrs) new-instrs)
-                           (if (deref-args-instr? (first instrs))
-                               (let ([patched-instrs (patch-instr (first instrs))])
-                                 (loop (rest instrs) (append (reverse patched-instrs) new-instrs)))
-                               (loop (rest instrs) (cons (first instrs) new-instrs)))))))]
+                       (cond [(trival-mov? (first instrs))
+                              (loop (rest instrs) new-instrs)]
+                             [(deref-args-instr? (first instrs))
+                              (let ([patched-instrs (patch-instr (first instrs))])
+                                (loop (rest instrs) (append (reverse patched-instrs) new-instrs)))]
+                             [(problematic-cmpq? (first instrs))
+                              (let ([patched-instrs (patch-problematic-cmpq (first instrs))])
+                                (loop (rest instrs) (append (reverse patched-instrs) new-instrs)))]
+                             [else (loop (rest instrs) (cons (first instrs) new-instrs))]))))]
     [else (error "patch")]))
 
 ;; patch-instructions : psuedo-x86 -> x86
@@ -1171,10 +1193,6 @@
               (loop (rest color-map) (cons (cons var location) var-map)))))))
 
   (define (assign-arg arg var-map)
-    ; (displayln "+++++++++++++++++++++++++++++++++++++++++++++")
-    ; (displayln var-map) ;;;todo, bug
-    ; (displayln "+++++++++++++++++++++++++++++++++++++++++++++")
-    
     (match arg
       [(Var name) (dict-ref var-map name)]
       [(Imm n) (Imm n)]
@@ -1184,6 +1202,8 @@
 
   (define (assign-instr instr var-map)
     (match instr
+      [(Instr 'set (list cc arg))
+       (Instr 'set (list cc (assign-arg arg var-map)))]
       [(Instr name args)
        (Instr name (map (lambda (arg) (assign-arg arg var-map)) args))]
       [else instr]))
@@ -1233,31 +1253,10 @@
             [new-body (allocate-reg-body var-map body )]
             [used-callee (written-callee new-body)]
             [spill-space (calc-spill-space var-map)])
-      ;  (displayln "===============================================================================")
-      ;       (displayln color-map)
-           
-      ;  (displayln var-map)
-      ;  (displayln "===============================================================================")
        (X86Program (append (list (cons 'spill-space spill-space))
                            (list (cons 'used-callee used-callee))
                            info)
                    new-body))]))
-
-
-; (define p (read-program "./examples/p9.example"))
-; ; (define p0 (pe-Lvar p))
-; (define p0 p)
-; ; (define p1 (uniquify p0))
-; (define p1 p0)
-; (define p2 (remove-complex-opera* p1))
-; (define p3 (explicate-control p2))
-; (define p4 (type-check-Cvar p3))
-; (define p5 (select-instructions p4))
-; (define p6 (uncover-live p5))
-; (define p7  (assign-homes p6))
-; (define p8 (patch-instructions p7))
-; (define p9 (prelude-and-conclusion p8))
-; (display (print-x86 p9))
 
 (define (shrink-expr expr)
   (match expr

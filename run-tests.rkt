@@ -67,7 +67,7 @@
 
 (define passes
   (list
-    (list "shrink" shrink interp-Lif type-check-Lif)
+   (list "shrink" shrink interp-Lif type-check-Lif)
    (list "uniquify" uniquify interp-Lif type-check-Lif)
    (list "remove complex" remove-complex-opera* interp-Lif type-check-Lif)
    (list "explicate control" explicate-control interp-Cif type-check-Cif)
@@ -75,6 +75,8 @@
    (list "uncover live" uncover-live interp-pseudo-x86-1)
    (list "build interference" build-interference interp-pseudo-x86-1)
    (list "allocate registers" allocate-registers interp-pseudo-x86-1)
+   (list "patch instructions" patch-instructions interp-x86-1)
+   (list "prelude and conclusion" prelude-and-conclusion interp-x86-1)
    ))
 
 ; (interp-tests "cond" type-check-Lif passes interp-Lif "cond_test" (tests-for "cond"))
@@ -88,6 +90,6 @@
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
 ; (compiler-tests "var" #f passes "var_test" (tests-for "var"))
-; (compiler-tests "eco" type-check-Lif passes "eco_test" (tests-for "eco"))
+(compiler-tests "eco" type-check-Lif passes "eco_test" (tests-for "eco"))
 
 

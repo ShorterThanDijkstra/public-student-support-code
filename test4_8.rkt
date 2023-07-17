@@ -10,10 +10,10 @@
 
 (define p0 (read-program "./tests/eco_test_9.rkt"))
 
-; (define p1 (shrink p0))
+(define p1 (shrink p0))
 
-; (define p2 (uniquify p1))
-(define p2 p0)
+(define p2 (uniquify p1))
+
 (define p3 (remove-complex-opera* p2))
 
 (define p4 (explicate-control p3))
