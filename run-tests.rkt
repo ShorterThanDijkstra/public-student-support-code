@@ -14,7 +14,7 @@
 (require "type-check-Cif.rkt")
 
 
-;; (debug-level 1)
+; (debug-level 1)
 ;; (AST-output-syntax 'concrete-syntax)
 
 ;; all the files in the tests/ directory with extension ".rkt".
@@ -54,7 +54,7 @@
 ;         (list "prelude and conclusion" prelude-and-conclusion interp-x86-0)
 ;         ))
 
-(debug-level 1)
+; (debug-level 1)
 ; (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
 ; (interp-tests "int" #f passes interp-Lvar "int_test" (tests-for "int"))
 ; (interp-tests "var" #f passes interp-Lvar "var_test" (tests-for "var"))
@@ -66,17 +66,23 @@
 ; (interp-tests "precon" #f passes interp-Lvar "precon_test" (tests-for "precon"))
 
 (define passes
-  (list (list "shrink" shrink interp-Lif type-check-Lif)
-        (list "uniquify" uniquify interp-Lif type-check-Lif)
-        (list "remove complex" remove-complex-opera* interp-Lif type-check-Lif)
-        (list "explicate control" explicate-control interp-Cif type-check-Cif)
-        (list "select instructions" select-instructions interp-pseudo-x86-1)))
+  (list
+    (list "shrink" shrink interp-Lif type-check-Lif)
+   (list "uniquify" uniquify interp-Lif type-check-Lif)
+   (list "remove complex" remove-complex-opera* interp-Lif type-check-Lif)
+   (list "explicate control" explicate-control interp-Cif type-check-Cif)
+   (list "select instructions" select-instructions interp-pseudo-x86-1)
+   (list "uncover live" uncover-live interp-pseudo-x86-1)
+   (list "build interference" build-interference interp-pseudo-x86-1)
+   (list "allocate registers" allocate-registers interp-pseudo-x86-1)
+   ))
 
 ; (interp-tests "cond" type-check-Lif passes interp-Lif "cond_test" (tests-for "cond"))
 ; (interp-tests "shrink test" type-check-Lif passes interp-Lif "shrink_test" (tests-for "shrink"))
 ; (interp-tests "var" type-check-Lif passes interp-Lvar "var_test" (tests-for "var"))
 ; (interp-tests "eco" type-check-Lif passes interp-Lif "eco_test" (tests-for "eco"))
-(interp-tests "insel" type-check-Lif passes interp-Lif "insel_test" (tests-for "insel"))
+; (interp-tests "insel" type-check-Lif passes interp-Lif "insel_test" (tests-for "insel"))
+(interp-tests "allocate registers" type-check-Lif passes interp-Lif "eco_test" (tests-for "eco"))
 
 
 ;; Uncomment the following when all the passes are complete to

@@ -1,6 +1,7 @@
 #lang racket
 (require racket/set racket/stream)
 (require graph)
+(require "multigraph.rkt")
 (require racket/fixnum)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
@@ -249,6 +250,7 @@
 
 ; ;; explicate-control : R1 -> C0
 (define (explicate-control p)
+  (set! basic-blocks '())
   (match p [(Program info body)
             (CProgram info (cons (cons 'start (explicate-tail body)) basic-blocks))]))
 ;   (error "TODO: code goes here (explicate-control)"))
@@ -279,6 +281,7 @@
   (match e
     [(Var x) (list (Instr 'movq (list (Var x) (Reg 'rax))))]
     [(Int n) (list (Instr 'movq (list (Imm n) (Reg 'rax))))]
+    [(Bool b) (list (Instr 'movq (list (Imm 1) (Reg 'rax))))]
     [(Prim 'read '())
      (list (Callq 'read_int 0))]
     [(Prim '- (list atm))
@@ -322,6 +325,8 @@
         (list (Instr 'movq (list (Var x1) (Var x))))]
        [(Int n)
         (list (Instr 'movq (list (Imm n) (Var x))))]
+       [(Bool b)
+        (list (Instr 'movq (list (Imm 1) (Var x))))]
        [(Prim 'read '())
         (list (Callq 'read_int 0)
               (Instr 'movq (list (Reg 'rax) (Var x))))]
@@ -421,6 +426,7 @@
     [(Imm n) (list (Imm n) homes)]
     [(Reg reg) (list (Reg reg) homes)]
     [(Deref reg n) (Deref reg n)]
+    [(ByteReg reg) (ByteReg reg)]
     [(Var x) (let ([exist (dict-ref homes x #f)])
                (if exist
                    (list (Deref 'rbp exist) homes)
@@ -445,6 +451,7 @@
     [(Callq label n) (list (Callq label n) homes)]
     [(Retq) (list (Retq) homes)]
     [(Jmp label) (list (Jmp label) homes)]
+    [(JmpIf cc label) (list (JmpIf cc label) homes)]
     [else (error 'assign-instr)]))
 
 (define (align16 n)
@@ -731,12 +738,16 @@
 (define argument-pass
   '(rdi rsi rdx rcx r8 r9))
 
+(define label->live (list (cons 'conclusion (set 'rax 'rsp))))
+
 (define (live-arg arg)
   (match arg
     [(Imm n) (set)]
     [(Reg reg) (set reg)]
     [(Deref reg int) (set reg)]
-    [(Var x) (set x)]))
+    [(Var x) (set x)]
+    [(Bool n) (set)]
+    [(ByteReg reg) (set reg)]))
 
 (define (read-instr instr)
   (match instr
@@ -746,10 +757,19 @@
      (set-union (live-arg arg1) (live-arg arg2))]
     [(Instr 'negq (list arg1)) (live-arg arg1)]
     [(Instr 'movq (list arg1 arg2)) (live-arg arg1)]
+    [(Instr 'xorq (list arg1 arg2))
+     (set-union (live-arg arg1) (live-arg arg2))]
+    [(Instr 'cmpq (list arg1 arg2))
+     (set-union (live-arg arg1) (live-arg arg2))]
+    [(Instr 'set (list cc arg2))
+     (set)]
+    [(Instr 'movzbq (list arg1 arg2))
+     (live-arg arg1)]
     [(Instr 'pushq (list arg1)) (live-arg arg1)]
     [(Instr 'popq (list arg1)) (set)]
     [(Callq label n) (list->set (take argument-pass n))]
-    [(Jmp 'conclusion) (set 'rax 'rsp)] ;todo
+    [(Jmp label) (set)]
+    [(JmpIf cc label) (set)]
     ))
 
 (define (write-instr instr)
@@ -760,36 +780,109 @@
      (live-arg arg2)]
     [(Instr 'negq (list arg1)) (live-arg arg1)]
     [(Instr 'movq (list arg1 arg2)) (live-arg arg2)]
+    [(Instr 'xorq (list arg1 arg2))
+     (live-arg arg2)]
+    [(Instr 'cmpq (list arg1 arg2))
+     (set)]
+    [(Instr 'set (list cc arg2))
+     (live-arg arg2)]
+    [(Instr 'movzbq (list arg1 arg2))
+     (live-arg arg2)]
     [(Instr 'pushq (list arg1)) (set)]
     [(Instr 'popq (list arg1)) (live-arg arg1)]
     [(Callq label n) (list->set caller-save)]
-    [(Jmp 'conclusion) (set 'rbp)] ;todo
+    [(Jmp label) (set)]
+    [(JmpIf cc label) (set)]
     ))
 
-(define (live-instr instr live-after)
-  (let ([reads (read-instr instr)]
-        [writes (write-instr instr)])
-    (set-union (set-subtract live-after writes) reads)))
+; (define (live-instr instr live-after)
+;   (let ([reads (read-instr instr)]
+;         [writes (write-instr instr)])
+;     (set-union (set-subtract live-after writes) reads)))
 
-(define (live-block block)
+(define (live-instr instr pre live-after)
+  (match instr
+    [(Jmp label) (set-union (dict-ref label->live label) live-after)]
+    [(JmpIf cc label)
+     (begin (assert #t (Jmp? pre))
+            (set-union (dict-ref label->live label) live-after))]
+    [else
+     (let ([reads (read-instr instr)]
+           [writes (write-instr instr)])
+       (set-union (set-subtract live-after writes) reads))]))
+
+(define (live-block label block)
   (match block
     [(Block info instrs)
      (let loop ([instrs-rev (reverse instrs)]
                 [lives '()]
-                [live-after (set)])
+                [live-after (set)]
+                [pre #f])
        (if (null? instrs-rev)
-           (Block (append (list (cons 'lives lives)) info) instrs)
-           (let ([new-live-after (live-instr (first instrs-rev) live-after)])
-             ;  (displayln new-live-after)
-             (loop (rest instrs-rev) (cons new-live-after lives) new-live-after))))]))
+           (begin
+             (set! label->live (cons (cons label live-after) label->live))
+             (Block (append (list (cons 'lives lives)) info) instrs))
+           (let ([new-live-after (live-instr (first instrs-rev) pre live-after)])
+             (loop (rest instrs-rev)
+                   (cons new-live-after lives)
+                   new-live-after
+                   (first instrs-rev)
+                   ))))]))
+
+(define (build-cfg-body label&blocks)
+  (define (init-cfg)
+    (let ([cfg (make-multigraph '())])
+      (let ([labels (map car label&blocks)])
+        (begin (for ([label labels])
+                 (add-vertex! cfg label))
+               cfg))))
+
+  (define (successors-instr instr)
+    (match instr
+      [(Jmp label) label]
+      [(JmpIf cc label) label]
+      [else #f]))
+  (define (successors block)
+    (match block
+      [(Block info instrs)
+       (foldl (lambda (instr succs) (let ([succ (successors-instr instr)])
+                                      (if (and succ (not (member succ succs)))
+                                          (cons succ succs)
+                                          succs)))
+              '()
+              instrs)]))
+
+  (let ([cfg (init-cfg)])
+    (let ([labels (map car label&blocks)]
+          [blocks (map cdr label&blocks)])
+      (begin
+        (for ([label labels] [block blocks])
+          (let ([succs (successors block)])
+            (for ([succ succs])
+              (add-directed-edge! cfg label succ))))
+        cfg))))
+
+(define (build-cfg p)
+  (match p
+    [(X86Program info body)
+     (build-cfg-body body)]))
 
 ;;;x86-var -> x86-var
 (define (uncover-live p)
+  (set!  label->live (list (cons 'conclusion (set 'rax 'rsp))))
   (match p
     [(X86Program info label&blocks)
      (let ([labels (map car label&blocks)]
            [blocks (map cdr label&blocks)])
-       (X86Program info (map (lambda (label block) (cons label block)) labels (map live-block blocks))))]))
+       (X86Program info
+                   (let* ([cfg (build-cfg-body label&blocks)]
+                          [cfg^t (transpose cfg)]
+                          [order (tsort cfg^t)])
+                     (begin
+                       (assert #t (eqv? (first order) 'conclusion))
+                       (for/list ([label (rest order)])
+                         (let ([block (dict-ref label&blocks label)])
+                           (cons label (live-block label block))))))))]))
 
 (define (link g s d)
   (begin (add-edge! g s d) g))
@@ -820,6 +913,7 @@
   (match arg
     [(Imm n) '()]
     [(Reg reg)  reg]
+    [(ByteReg reg) reg]
     [(Deref reg int) '()]
     [(Var x) x]))
 
@@ -827,15 +921,16 @@
   (match instr
     [(Instr 'movq (list arg1 arg2))
      (mov-interfence (mov-arg-sym arg1) (mov-arg-sym arg2) (set->list after) g)]
+    [(Instr 'movzbq (list arg1 arg2))
+     (mov-interfence (mov-arg-sym arg1) (mov-arg-sym arg2) (set->list after) g)]
     [else (let ([writes (write-instr instr)])
             (other-interfence (set->list writes) (set->list after) g))]
     ))
 
-(define (block-interfence block)
+(define (block-interfence block g)
   (match block
     [(Block info instrs)
-     (let ([lives (dict-ref info 'lives)]
-           [g (undirected-graph (append caller-saved callee-saved argument-pass))])
+     (let ([lives (dict-ref info 'lives)])
        (let loop ([lives (rest lives)]
                   [instrs instrs]
                   [g g])
@@ -847,12 +942,13 @@
 (define (build-interference p)
   (match p
     [(X86Program info label&blocks)
-     (let ([labels (map car label&blocks)]
-           [blocks (map cdr label&blocks)])
-       (let ([conflicts (map block-interfence blocks)])
-         (let ([new-info (append (list (cons 'conflicts (map cons labels conflicts))) info)])
-           (X86Program new-info label&blocks))))]))
-
+     (let loop ([blocks (map cdr label&blocks)]
+                [g (undirected-graph (append caller-saved callee-saved argument-pass))])
+       (if (null? blocks)
+           (let ([new-info (append (list (cons 'conflicts g)) info)])
+             (X86Program new-info label&blocks))
+           (loop (rest blocks)
+                 (block-interfence (first blocks) g))))]))
 
 (define (graph-of-program-start p)
   (match p
@@ -919,16 +1015,18 @@
             (> len1 len2)))))
 
   (define (build-move-related-graph)
+    (define (loop-block-instrs block)
+      (let loop ([edges '()] [instrs (Block-instr* block)]) ; todo
+        (if (null? instrs)
+            edges
+            (let ([instr (first instrs)])
+              (match instr
+                [(Instr 'movq (list (Var name1) (Var name2)))
+                 (loop (cons (list name1 name2) edges) (rest instrs))]
+                [else (loop edges (rest instrs))])))))
     (match program
       [(X86Program info body)
-       (let loop ([edges '()] [instrs (Block-instr* (dict-ref body 'start))])
-         (if (null? instrs)
-             (undirected-graph edges)
-             (let ([instr (first instrs)])
-               (match instr
-                 [(Instr 'movq (list (Var name1) (Var name2)))
-                  (loop (cons (list name1 name2) edges) (rest instrs))]
-                 [else (loop edges (rest instrs))]))))]))
+       (undirected-graph (flatten (map loop-block-instrs (map cdr body))))]))
 
   (define (update-queue! que handle-map vertex)
     (let ([name (Vertex-name vertex)])
@@ -1073,10 +1171,15 @@
               (loop (rest color-map) (cons (cons var location) var-map)))))))
 
   (define (assign-arg arg var-map)
+    ; (displayln "+++++++++++++++++++++++++++++++++++++++++++++")
+    ; (displayln var-map) ;;;todo, bug
+    ; (displayln "+++++++++++++++++++++++++++++++++++++++++++++")
+    
     (match arg
       [(Var name) (dict-ref var-map name)]
       [(Imm n) (Imm n)]
       [(Reg name) (Reg name)]
+      [(ByteReg name) (ByteReg name)]
       [(Deref reg offset) (Deref reg offset)]))
 
   (define (assign-instr instr var-map)
@@ -1090,23 +1193,26 @@
       [(Block info instrs)
        (Block info (map (lambda (instr) (assign-instr instr var-map)) instrs))]))
 
-  (define (allocate-reg-start-body var-map body)
+  (define (allocate-reg-body var-map body)
     (let ([labels (map car body)] [blocks (map cdr body)])
       (for/list ([label labels] [block blocks])
-        (if (eqv? label 'start)
-            (cons label (assign-location block var-map))
-            (cons label block)))))
+        (cons label (assign-location block var-map)))))
 
-  (define (written-callee-start body)
-    (let ([block (dict-ref body 'start)])
+  (define (written-callee body)
+    (define (callee-block block)
       (match block
         [(Block info instrs)
-         (filter (lambda (reg)
-                   (and (member reg callee-saved)
-                        (not (eqv? 'rbp reg))))
-                 (set->list (foldl (lambda (writes res) (set-union writes res))
-                                   (set)
-                                   (map write-instr instrs))))])))
+         (list->set
+          (filter (lambda (reg)
+                    (and (member reg callee-saved)
+                         (not (eqv? 'rbp reg))))
+                  (set->list (foldl (lambda (writes res) (set-union writes res))
+                                    (set)
+                                    (map write-instr instrs)))))]))
+    (set->list (foldl (lambda (block writes) (set-union (callee-block block) writes))
+                      (set)
+                      (map cdr body))))
+
 
   (define (calc-spill-space var-map)
     (let loop ([space 0] [var-map var-map])
@@ -1120,13 +1226,18 @@
 
   (match p
     [(X86Program info body)
-     (let* ([g-start (dict-ref (dict-ref info 'conflicts) 'start)]
-            [vars (vars-in-graph g-start)]
-            [color-map (color-graph g-start vars p)]
+     (let* ([g (dict-ref info 'conflicts)]
+            [vars (vars-in-graph g)]
+            [color-map (color-graph g vars p)]
             [var-map (build-var-map color-map REG-AVALIABLE)]
-            [new-body (allocate-reg-start-body var-map body)]
-            [used-callee (written-callee-start new-body)]
+            [new-body (allocate-reg-body var-map body )]
+            [used-callee (written-callee new-body)]
             [spill-space (calc-spill-space var-map)])
+      ;  (displayln "===============================================================================")
+      ;       (displayln color-map)
+           
+      ;  (displayln var-map)
+      ;  (displayln "===============================================================================")
        (X86Program (append (list (cons 'spill-space spill-space))
                            (list (cons 'used-callee used-callee))
                            info)
