@@ -1,6 +1,7 @@
 #lang racket
 (require racket/set racket/stream)
 (require graph)
+(require racket/promise)
 (require "multigraph.rkt")
 (require racket/fixnum)
 (require "interp-Lint.rkt")
@@ -191,7 +192,10 @@
 ; [(Program info e) (Program info (anf-exp (rco-exp e)))]))
 ; (error "TODO: code goes here (remove-complex-opera*)"))
 
-(define basic-blocks '())
+(define basic-blocks 'UNINTIATED)
+
+(define (init-basic-blocks!)
+  (set! basic-blocks '()))
 
 (define (create-block tail)
   (match tail
@@ -200,6 +204,16 @@
      (let ([label (gensym 'block)])
        (set! basic-blocks (cons (cons label tail) basic-blocks))
        (Goto label))]))
+
+; (define (create-block tail)
+;   (delay
+;     (define t (force tail))
+;     (match t
+;       [(Goto label) (Goto label)]
+;       [else
+;        (let ([label (gensym 'block)])
+;          (set! basic-blocks (cons (cons label t) basic-blocks))
+;          (Goto label))])))
 
 (define (explicate-pred cnd thn els)
   (match cnd
@@ -250,9 +264,9 @@
 
 ; ;; explicate-control : R1 -> C0
 (define (explicate-control p)
-  (set! basic-blocks '())
+  (init-basic-blocks!)
   (match p [(Program info body)
-            (CProgram info (cons (cons 'start (explicate-tail body)) basic-blocks))]))
+            (CProgram info (cons (cons 'start (force (explicate-tail body))) basic-blocks))]))
 ;   (error "TODO: code goes here (explicate-control)"))
 
 (define (insts-atm c-var-ele)
@@ -760,7 +774,10 @@
 (define argument-pass
   '(rdi rsi rdx rcx r8 r9))
 
-(define label->live (list (cons 'conclusion (set 'rax 'rsp))))
+(define label->live 'UNINITIATED)
+
+(define (init-labeo->live!)
+  (set!  label->live (list (cons 'conclusion (set 'rax 'rsp)))))
 
 (define (live-arg arg)
   (match arg
@@ -891,7 +908,7 @@
 
 ;;;x86-var -> x86-var
 (define (uncover-live p)
-  (set!  label->live (list (cons 'conclusion (set 'rax 'rsp))))
+  (init-labeo->live!)
   (match p
     [(X86Program info label&blocks)
      (let ([labels (map car label&blocks)]
