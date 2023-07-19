@@ -197,76 +197,86 @@
 (define (init-basic-blocks!)
   (set! basic-blocks '()))
 
-(define (create-block tail)
-  (match tail
-    [(Goto label) (Goto label)]
-    [else
-     (let ([label (gensym 'block)])
-       (set! basic-blocks (cons (cons label tail) basic-blocks))
-       (Goto label))]))
-
 ; (define (create-block tail)
-;   (delay
-;     (define t (force tail))
-;     (match t
-;       [(Goto label) (Goto label)]
-;       [else
-;        (let ([label (gensym 'block)])
-;          (set! basic-blocks (cons (cons label t) basic-blocks))
-;          (Goto label))])))
+;   (match tail
+;     [(Goto label) (Goto label)]
+;     [else
+;      (let ([label (gensym 'block)])
+;        (set! basic-blocks (cons (cons label tail) basic-blocks))
+;        (Goto label))]))
+
+;;; 默认参数和输出都是promise,当需要构建ast时，force
+(define (create-block tail)
+  (delay
+    (define t (forces tail))
+    (match t
+      [(Goto label) (Goto label)]
+      [else
+       (let ([label (gensym 'block)])
+         (set! basic-blocks (cons (cons label t) basic-blocks))
+         (Goto label))])))
 
 (define (explicate-pred cnd thn els)
-  (match cnd
-    [(Var x)
-     (let ([thn-goto (create-block thn)]
-           [els-goto (create-block els)])
-       ;  (IfStmt cnd thn-goto els-goto))] ;;; pred must be a Prim of cmp
-       (IfStmt (Prim 'eq? (list (Var x) (Bool #t))) thn-goto els-goto))]
-    [(Let x rhs body)
-     (let ([body-var (gen-sym 'tmp)])
+  (delay
+    (match (forces cnd)
+      [(Var x)
+       (let ([thn-goto (forces (create-block thn))]
+             [els-goto (forces (create-block els))])
+         ;  (IfStmt cnd thn-goto els-goto))] ;;; pred must be a Prim of cmp
+         (IfStmt (Prim 'eq? (list (Var x) (Bool #t))) thn-goto els-goto))]
+      [(Let x rhs body)
        (explicate-assign rhs x
-                         (explicate-pred body thn els)))]
-    [(Prim 'not (list e)) (explicate-pred e els thn)]
-    [(Prim op es) #:when (or (eq? op 'eq?) (eq? op '<)
-                             (eq? op '<=) (eq? op '>) (eq? op '>=))
-                  (IfStmt (Prim op es) (create-block thn)
-                          (create-block els))]
-    [(Bool b) (if b thn els)]
-    [(If cnd^ thn^ els^)
-     (let ([thn-goto (create-block thn)]
-           [els-goto (create-block els)])
-       (let ([thn^-goto (create-block (explicate-pred thn^ thn-goto els-goto))]
-             [els^-goto (create-block (explicate-pred els^ thn-goto els-goto))])
-         (explicate-pred cnd^ thn^-goto els^-goto)))]
-    [else (error "explicate-pred unhandled case" cnd)]))
+                         (explicate-pred body thn els))]
+      [(Prim 'not (list e)) (explicate-pred e els thn)]
+      [(Prim op es) #:when (or (eq? op 'eq?) (eq? op '<)
+                               (eq? op '<=) (eq? op '>) (eq? op '>=))
+                    (IfStmt (Prim op es)
+                            (forces (create-block thn))
+                            (forces (create-block els)))]
+      [(Bool b) (if b thn els)]
+      [(If cnd^ thn^ els^)
+       (let ([thn-goto (create-block thn)]
+             [els-goto (create-block els)])
+         (let ([thn^-goto (create-block (explicate-pred thn^ thn-goto els-goto))]
+               [els^-goto  (create-block (explicate-pred els^ thn-goto els-goto))])
+           (explicate-pred cnd^ thn^-goto els^-goto)))]
+      [else (error "explicate-pred unhandled case" cnd)])))
 
 (define (explicate-tail e)
-  (match e
-    [(Var x) (Return e)]
-    [(Int n) (Return e)]
-    [(Bool b) (Return e)]
-    [(Prim op es) (Return e)]
-    [(Let x rhs body) (explicate-assign rhs x (explicate-tail body))]
-    [(If cnd thn els) (explicate-pred cnd (explicate-tail thn) (explicate-tail els))]
-    [else (error "explicate-tail unhandled case" e)]))
+  (delay
+    (match (forces e)
+      [(Var x) (Return (forces e))]
+      [(Int n) (Return (forces e))]
+      [(Bool b) (Return (forces e))]
+      [(Prim op es) (Return (forces e))]
+      [(Let x rhs body) (explicate-assign rhs x (explicate-tail body))]
+      [(If cnd thn els) (explicate-pred cnd (explicate-tail thn) (explicate-tail els))]
+      [else (error "explicate-tail unhandled case" e)])))
 
 (define (explicate-assign e x cont)
-  (match e
-    [(Var x) (Seq (Assign (Var x) e) cont)]
-    [(Int n) (Seq (Assign (Var x) e) cont)]
-    [(Bool n) (Seq (Assign (Var x) e) cont)]
-    [(Prim op es)  (Seq (Assign (Var x) e) cont)]
-    [(Let y rhs body) (explicate-assign rhs y (explicate-assign body x cont))]
-    [(If cnd thn els) (let ([new-thn (explicate-assign thn x cont)]
-                            [new-els (explicate-assign els x cont)])
-                        (explicate-pred cnd new-thn new-els))]
-    [else (error "explicate-assign unhandled case" e)]))
+  (delay
+    (match (forces e)
+      [(Var x) (Seq (Assign (Var x) e) (forces cont))]
+      [(Int n) (Seq (Assign (Var x) e) (forces cont))]
+      [(Bool n) (Seq (Assign (Var x) e) (forces cont))]
+      [(Prim op es)  (Seq (Assign (Var x) e) (forces cont))]
+      [(Let y rhs body) (explicate-assign rhs y (explicate-assign body x cont))]
+      [(If cnd thn els) (let ([new-thn (explicate-assign thn x cont)]
+                              [new-els (explicate-assign els x cont)])
+                          (explicate-pred cnd new-thn new-els))]
+      [else (error "explicate-assign unhandled case" e)])))
+
+(define (forces p)
+  (if (promise? p)
+      (forces (force p))
+      p))
 
 ; ;; explicate-control : R1 -> C0
 (define (explicate-control p)
   (init-basic-blocks!)
   (match p [(Program info body)
-            (CProgram info (cons (cons 'start (force (explicate-tail body))) basic-blocks))]))
+            (let ([blocks (forces (explicate-tail body))])
+                  (CProgram info (cons (cons 'start blocks) basic-blocks)))]))
 ;   (error "TODO: code goes here (explicate-control)"))
 
 (define (insts-atm c-var-ele)
