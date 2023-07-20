@@ -276,7 +276,7 @@
   (init-basic-blocks!)
   (match p [(Program info body)
             (let ([blocks (forces (explicate-tail body))])
-                  (CProgram info (cons (cons 'start blocks) basic-blocks)))]))
+              (CProgram info (cons (cons 'start blocks) basic-blocks)))]))
 ;   (error "TODO: code goes here (explicate-control)"))
 
 (define (insts-atm c-var-ele)
@@ -1311,6 +1311,81 @@
   (match p
     [(Program info expr)
      (Program info (shrink-expr expr))]))
+
+(define (remove-jumps p)
+  (define (basic-block? label)
+    (not
+     (or
+      (eqv? label 'main)
+      (eqv? label 'start)
+      (eqv? label 'conclusion))))
+
+  (define (replace-jmp instrs from from-label)
+    (let loop ([instrs instrs]
+               [new-instrs '()])
+      (if (null? instrs)
+          (reverse new-instrs)
+          (match (first instrs)
+            [(Jmp label)
+             (if (eqv? label from-label)
+                 (loop (rest instrs)
+                       (append (reverse from) new-instrs))
+                 (loop (rest instrs)
+                       (cons (first instrs) new-instrs)))]
+            [else (loop (rest instrs)
+                        (cons (first instrs) new-instrs))]))))
+
+  (define (prune body merge-dict)
+    (let ([merge-froms (map cdr merge-dict)])
+      (filter (lambda (label&block)
+                (let ([label (car label&block)])
+                  (not (member label merge-froms))))
+              body)))
+
+  (define (merge-block to from from-label)
+    (match* (to from)
+      [((Block info-to instrs-to) (Block info-from instrs-from))
+       (Block '() (replace-jmp instrs-to instrs-from from-label))])) ; throw away block info
+
+  (define (merge body order merge-dict)
+    (let loop ([labels order]
+               [new-body '()])
+      (if (null? labels)
+          new-body
+          (let* ([label (first labels)]
+                 [block  (dict-ref body label)])
+            (let ([merge-from (dict-ref merge-dict label #f)])
+              (if merge-from
+                  (let ([merged-block (merge-block block (dict-ref new-body merge-from) merge-from)])
+                    (loop (rest labels)
+                          (cons (cons label merged-block) new-body)))
+                  (loop (rest labels)
+                        (cons (cons label block) new-body))))))))
+
+
+  (let ([cfg^t (transpose (build-cfg p))])
+    (let ([vertices  (tsort cfg^t)])
+      (let* ([v&neighss (map (lambda (v)
+                               (cons v (sequence->list (in-neighbors cfg^t v))))
+                             vertices)]
+             [basics  (filter
+                       (lambda (v&neighs)
+                         (let ([v (car v&neighs)]
+                               [neighs (cdr v&neighs)])
+                           (and (basic-block? v)
+                                (= (length neighs) 1))))
+                       v&neighss)]
+             [merge-dict (map
+                          (lambda (v&neigh)
+                            (cons (cadr v&neigh) ; merge to
+                                  (car v&neigh))) ; merge from
+                          basics)])
+        (displayln merge-dict)
+        (match p
+          [(X86Program info body)
+           (X86Program info
+                       (prune (merge body vertices merge-dict) merge-dict))])))))
+
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
